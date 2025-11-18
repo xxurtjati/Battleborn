@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Playtomic Availability Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+
+        h2 {
+            color: #555;
+            margin: 30px 0 15px 0;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #007bff;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        input[type="time"],
+        select {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .results {
+            margin-top: 20px;
+        }
+
+        .club-card {
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .club-card:hover {
+            background: #f8f9fa;
+        }
+
+        .club-card h3 {
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .club-card p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .clubs-list {
+            list-style: none;
+        }
+
+        .club-item {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .club-info {
+            flex: 1;
+        }
+
+        .club-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .monitoring-config {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            border-left: 4px solid #007bff;
+        }
+
+        .stat-card h4 {
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+
+        .stat-card p {
+            color: #333;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Playtomic Availability Monitor</h1>
+
+        <!-- Search Section -->
+        <div class="section">
+            <h2>1. Search for Clubs</h2>
+            <div class="search-box">
+                <input type="text" id="searchQuery" placeholder="Enter club name (e.g., Madrid Padel)">
+                <button onclick="searchClubs()">Search</button>
+            </div>
+            <div id="searchResults" class="results"></div>
+        </div>
+
+        <!-- My Clubs Section -->
+        <div class="section">
+            <h2>2. My Clubs</h2>
+            <button onclick="loadClubs()">Refresh Clubs</button>
+            <div id="clubsList" class="results"></div>
+        </div>
+
+        <!-- API Documentation -->
+        <div class="section">
+            <h2>API Documentation</h2>
+            <p>For full API documentation, visit <a href="/docs" target="_blank">/docs</a></p>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+
+        async function searchClubs() {
+            const query = document.getElementById('searchQuery').value;
+            if (!query || query.length < 2) {
+                alert('Please enter at least 2 characters');
+                return;
+            }
+
+            const resultsDiv = document.getElementById('searchResults');
+            resultsDiv.innerHTML = '<div class="loading">Searching...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/clubs/search?query=${encodeURIComponent(query)}`);
+                if (!response.ok) throw new Error('Search failed');
+
+                const clubs = await response.json();
+
+                if (clubs.length === 0) {
+                    resultsDiv.innerHTML = '<p>No clubs found</p>';
+                    return;
+                }
+
+                resultsDiv.innerHTML = clubs.map(club => `
+                    <div class="club-card" onclick="saveClub('${club.playtomic_id}', '${club.name}', '${club.address || ''}', '${club.city || ''}', '${club.country || ''}', ${club.latitude || 'null'}, ${club.longitude || 'null'}, '${club.slug || ''}')">
+                        <h3>${club.name}</h3>
+                        <p>${club.address || ''}, ${club.city || ''}, ${club.country || ''}</p>
+                    </div>
+                `).join('');
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function saveClub(playtomicId, name, address, city, country, lat, lng, slug) {
+            if (!confirm(`Add ${name} to your clubs?`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/clubs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        playtomic_id: playtomicId,
+                        name: name,
+                        address: address,
+                        city: city,
+                        country: country,
+                        latitude: lat,
+                        longitude: lng,
+                        slug: slug
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to save club');
+                }
+
+                alert('Club added successfully!');
+                loadClubs();
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function loadClubs() {
+            const listDiv = document.getElementById('clubsList');
+            listDiv.innerHTML = '<div class="loading">Loading...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/clubs`);
+                if (!response.ok) throw new Error('Failed to load clubs');
+
+                const clubs = await response.json();
+
+                if (clubs.length === 0) {
+                    listDiv.innerHTML = '<p>No clubs added yet. Search and add clubs above.</p>';
+                    return;
+                }
+
+                listDiv.innerHTML = '<ul class="clubs-list">' + clubs.map(club => `
+                    <li class="club-item">
+                        <div class="club-info">
+                            <strong>${club.name}</strong><br>
+                            <small>${club.city || ''}, ${club.country || ''}</small>
+                        </div>
+                        <div class="club-actions">
+                            <button class="btn-small" onclick="fetchAvailability(${club.id})">Fetch Availability</button>
+                            <button class="btn-small" onclick="showMonitoring(${club.id})">Configure Monitoring</button>
+                            <button class="btn-small" onclick="viewUtilization(${club.id})">View Stats</button>
+                        </div>
+                    </li>
+                `).join('') + '</ul>';
+            } catch (error) {
+                listDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function fetchAvailability(clubId) {
+            if (!confirm('Fetch availability for the next 7 days?')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/clubs/${clubId}/fetch-availability?days=7`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) throw new Error('Failed to fetch availability');
+
+                alert('Availability fetched successfully!');
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function showMonitoring(clubId) {
+            // Simple implementation - in production, use a modal
+            const enabled = confirm('Enable monitoring for this club?');
+            if (!enabled) return;
+
+            const frequency = prompt('Check frequency in minutes (e.g., 15):', '15');
+            if (!frequency) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/clubs/${clubId}/monitoring`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        club_id: clubId,
+                        enabled: true,
+                        frequency_minutes: parseInt(frequency),
+                        days_ahead: 7
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to configure monitoring');
+                }
+
+                alert('Monitoring configured successfully!');
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function viewUtilization(clubId) {
+            try {
+                const response = await fetch(`${API_BASE}/clubs/${clubId}/utilization/current`);
+                if (!response.ok) throw new Error('Failed to fetch utilization');
+
+                const data = await response.json();
+                alert(`Current Utilization for ${data.club_name}:\n\nTotal Slots: ${data.total_slots}\nBooked: ${data.booked_slots} (${data.booked_percentage}%)\nFree: ${data.free_slots} (${data.free_percentage}%)`);
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        // Load clubs on page load
+        loadClubs();
+    </script>
+</body>
+</html>
