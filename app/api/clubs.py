@@ -3,6 +3,8 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
+import re
 
 from app.core.database import get_db
 from app.models.club import Club
@@ -10,6 +12,12 @@ from app.schemas.club import ClubCreate, ClubUpdate, ClubInDB, ClubSearchResult
 from app.services.playtomic_client import playtomic_client
 
 router = APIRouter(prefix="/clubs", tags=["clubs"])
+
+
+class ClubFromURL(BaseModel):
+    """Schema for creating a club from a Playtomic URL."""
+    url: str
+    name: str = None
 
 
 @router.get("/search", response_model=List[ClubSearchResult])
@@ -33,6 +41,70 @@ async def search_clubs(
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to search clubs: {str(e)}")
+
+
+@router.post("/from-url", response_model=ClubInDB, status_code=201)
+async def create_club_from_url(
+    club_url: ClubFromURL,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Create a club directly from a Playtomic URL.
+
+    This is easier than searching! Just paste the club's Playtomic URL.
+
+    Example URLs:
+    - https://playtomic.com/clubs/mitte-charlotte
+    - https://playtomic.com/clubs/mitte-charlotte?date=2025-12-02
+
+    Args:
+        club_url: Object containing the Playtomic URL and optional name
+        db: Database session
+
+    Returns:
+        Created club
+    """
+    # Extract slug from URL
+    # Supports: https://playtomic.com/clubs/mitte-charlotte or with query params
+    pattern = r'playtomic\.com/clubs/([a-zA-Z0-9\-_]+)'
+    match = re.search(pattern, club_url.url)
+
+    if not match:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Playtomic URL. Expected format: https://playtomic.com/clubs/club-slug"
+        )
+
+    slug = match.group(1)
+
+    # Use slug as playtomic_id (we can update this later if we find the real ID)
+    club_name = club_url.name or slug.replace('-', ' ').title()
+
+    # Check if club already exists
+    result = await db.execute(
+        select(Club).where(Club.slug == slug)
+    )
+    existing_club = result.scalar_one_or_none()
+
+    if existing_club:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Club with slug '{slug}' already exists (ID: {existing_club.id})"
+        )
+
+    # Create club with minimal info
+    db_club = Club(
+        playtomic_id=slug,  # We'll use slug as ID for now
+        slug=slug,
+        name=club_name,
+        timezone="Europe/Berlin",  # Default for Germany, can be updated later
+    )
+
+    db.add(db_club)
+    await db.commit()
+    await db.refresh(db_club)
+
+    return db_club
 
 
 @router.post("", response_model=ClubInDB, status_code=201)
