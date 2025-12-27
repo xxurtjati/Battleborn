@@ -4,6 +4,8 @@ import {
   getVideoInfo,
   splitVideo,
   trimVideo,
+  downloadYouTubeVideo,
+  cleanupYouTubeVideos,
   listOutputs,
   deleteVideo
 } from '../controllers/videoController.js';
@@ -15,6 +17,8 @@ export default (upload) => {
   router.get('/info/:filename', getVideoInfo);
   router.post('/split', splitVideo);
   router.post('/trim', trimVideo);
+  router.post('/download-youtube', downloadYouTubeVideo);
+  router.post('/cleanup-youtube', cleanupYouTubeVideos);
   router.get('/outputs', listOutputs);
   router.delete('/:filename', deleteVideo);
 

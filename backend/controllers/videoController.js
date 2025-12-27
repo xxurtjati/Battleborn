@@ -2,9 +2,13 @@ import ffmpeg from 'fluent-ffmpeg';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
+import youtubedl from 'youtube-dl-exec';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Configure youtube-dl-exec to use system yt-dlp
+youtubedl.ytDlpPath = '/usr/local/bin/yt-dlp';
 
 // fluent-ffmpeg will use system ffmpeg if available
 
@@ -223,6 +227,86 @@ export const trimVideo = async (req, res) => {
   }
 };
 
+// Download YouTube video with optional time range
+export const downloadYouTubeVideo = async (req, res) => {
+  try {
+    const { url, startTime, endTime } = req.body;
+
+    if (!url) {
+      return res.status(400).json({ error: 'YouTube URL is required' });
+    }
+
+    // Validate YouTube URL
+    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
+    if (!youtubeRegex.test(url)) {
+      return res.status(400).json({ error: 'Invalid YouTube URL' });
+    }
+
+    const timestamp = Date.now();
+    const outputFilename = `youtube_${timestamp}.mp4`;
+    const outputPath = path.join(uploadsDir, outputFilename);
+
+    // Build yt-dlp options
+    const options = {
+      format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      output: outputPath,
+      mergeOutputFormat: 'mp4',
+      noPlaylist: true,
+    };
+
+    // Add download sections if time range specified
+    if (startTime !== undefined && endTime !== undefined) {
+      // Convert seconds to HH:MM:SS format
+      const formatTime = (seconds) => {
+        const hrs = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      };
+
+      const start = formatTime(startTime);
+      const end = formatTime(endTime);
+      options.downloadSections = `*${start}-${end}`;
+    }
+
+    console.log('Downloading YouTube video:', url);
+    console.log('Options:', options);
+
+    // Download the video
+    await youtubedl(url, options);
+
+    // Get video info
+    const metadata = await new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(outputPath, (err, data) => {
+        if (err) reject(err);
+        else resolve(data);
+      });
+    });
+
+    const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+
+    res.json({
+      message: 'YouTube video downloaded successfully',
+      filename: outputFilename,
+      url: `/uploads/${outputFilename}`,
+      duration: metadata.format.duration,
+      size: metadata.format.size,
+      width: videoStream?.width,
+      height: videoStream?.height,
+      trimmed: startTime !== undefined && endTime !== undefined,
+      trimStart: startTime,
+      trimEnd: endTime
+    });
+
+  } catch (error) {
+    console.error('YouTube download error:', error);
+    res.status(500).json({
+      error: 'Failed to download YouTube video',
+      details: error.message
+    });
+  }
+};
+
 // Delete video file
 export const deleteVideo = async (req, res) => {
   try {
@@ -235,5 +319,32 @@ export const deleteVideo = async (req, res) => {
   } catch (error) {
     console.error('Delete error:', error);
     res.status(500).json({ error: 'Failed to delete video' });
+  }
+};
+
+// Cleanup YouTube downloads
+export const cleanupYouTubeVideos = async (req, res) => {
+  try {
+    const files = await fs.readdir(uploadsDir);
+    const youtubeFiles = files.filter(f => f.startsWith('youtube_'));
+
+    let deletedCount = 0;
+    for (const file of youtubeFiles) {
+      try {
+        await fs.unlink(path.join(uploadsDir, file));
+        deletedCount++;
+      } catch (err) {
+        console.error(`Failed to delete ${file}:`, err);
+      }
+    }
+
+    res.json({
+      message: 'YouTube videos cleaned up',
+      deletedCount,
+      totalFound: youtubeFiles.length
+    });
+  } catch (error) {
+    console.error('Cleanup error:', error);
+    res.status(500).json({ error: 'Failed to cleanup YouTube videos' });
   }
 };

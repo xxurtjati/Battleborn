@@ -9,6 +9,63 @@ function VideoComparison() {
   const [isComparing, setIsComparing] = useState(false);
   const [overallMatch, setOverallMatch] = useState(null);
 
+  // YouTube download states
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [youtubeStartTime, setYoutubeStartTime] = useState('');
+  const [youtubeEndTime, setYoutubeEndTime] = useState('');
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [youtubeVideo, setYoutubeVideo] = useState(null);
+
+  // Convert MM:SS format to seconds
+  const parseTimeToSeconds = (timeStr) => {
+    if (!timeStr) return undefined;
+    const parts = timeStr.split(':');
+    if (parts.length === 2) {
+      const mins = parseInt(parts[0]) || 0;
+      const secs = parseInt(parts[1]) || 0;
+      return mins * 60 + secs;
+    }
+    return parseInt(timeStr) || undefined;
+  };
+
+  const handleDownloadYoutube = async () => {
+    if (!youtubeUrl.trim()) {
+      alert('Please enter a YouTube URL');
+      return;
+    }
+
+    const startSecs = parseTimeToSeconds(youtubeStartTime);
+    const endSecs = parseTimeToSeconds(youtubeEndTime);
+
+    if (startSecs !== undefined && endSecs !== undefined && startSecs >= endSecs) {
+      alert('End time must be after start time');
+      return;
+    }
+
+    setIsDownloading(true);
+
+    try {
+      const response = await axios.post('/api/video/download-youtube', {
+        url: youtubeUrl,
+        startTime: startSecs,
+        endTime: endSecs
+      });
+
+      setYoutubeVideo(response.data);
+      setInstructorSegments([{
+        filename: response.data.filename,
+        url: response.data.url
+      }]);
+
+      alert('YouTube video downloaded successfully!');
+    } catch (error) {
+      console.error('YouTube download error:', error);
+      alert('Failed to download YouTube video: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const handleLoadSegments = async (type) => {
     try {
       const response = await axios.get('/api/video/outputs');
@@ -105,13 +162,72 @@ function VideoComparison() {
         <p>Compare user workout submissions against instructor videos using AI analysis</p>
       </div>
 
+      <div className="youtube-section">
+        <h3>YouTube Instructor Video</h3>
+        <p className="section-description">Download a trimmed section from a YouTube workout video to use as instructor reference</p>
+
+        <div className="youtube-inputs">
+          <div className="input-group">
+            <label>YouTube URL</label>
+            <input
+              type="text"
+              placeholder="https://youtube.com/watch?v=..."
+              value={youtubeUrl}
+              onChange={(e) => setYoutubeUrl(e.target.value)}
+              disabled={isDownloading}
+              className="youtube-url-input"
+            />
+          </div>
+
+          <div className="time-inputs">
+            <div className="input-group">
+              <label>Start Time (MM:SS or seconds)</label>
+              <input
+                type="text"
+                placeholder="5:30 or 330"
+                value={youtubeStartTime}
+                onChange={(e) => setYoutubeStartTime(e.target.value)}
+                disabled={isDownloading}
+              />
+            </div>
+
+            <div className="input-group">
+              <label>End Time (MM:SS or seconds)</label>
+              <input
+                type="text"
+                placeholder="15:30 or 930"
+                value={youtubeEndTime}
+                onChange={(e) => setYoutubeEndTime(e.target.value)}
+                disabled={isDownloading}
+              />
+            </div>
+          </div>
+
+          <button
+            className="download-youtube-button"
+            onClick={handleDownloadYoutube}
+            disabled={isDownloading || !youtubeUrl.trim()}
+          >
+            {isDownloading ? 'Downloading...' : 'Download YouTube Segment'}
+          </button>
+
+          {youtubeVideo && (
+            <div className="youtube-success">
+              ✓ Downloaded: {youtubeVideo.filename} ({Math.round(youtubeVideo.duration)}s, {(youtubeVideo.size / (1024 * 1024)).toFixed(1)}MB)
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="divider">OR</div>
+
       <div className="segment-selectors">
         <div className="selector-section">
           <h3>Instructor Segments</h3>
           <button
             className="load-button"
             onClick={() => handleLoadSegments('instructor')}
-            disabled={isComparing}
+            disabled={isComparing || isDownloading}
           >
             Load Instructor Segments
           </button>
@@ -125,7 +241,7 @@ function VideoComparison() {
           <button
             className="load-button"
             onClick={() => handleLoadSegments('user')}
-            disabled={isComparing}
+            disabled={isComparing || isDownloading}
           >
             Load User Segments
           </button>
@@ -210,6 +326,68 @@ function VideoComparison() {
                   <h5>Analysis</h5>
                   <p>{comparison.analysis}</p>
                 </div>
+
+                {comparison.perMinuteAnalysis && comparison.perMinuteAnalysis.length > 0 && (
+                  <div className="per-minute-section">
+                    <h5>Per-Minute Breakdown</h5>
+                    <div className="per-minute-list">
+                      {comparison.perMinuteAnalysis.map((minute, i) => (
+                        <div key={i} className="minute-card">
+                          <div className="minute-header">
+                            <span className="minute-number">Minute {minute.minute}</span>
+                            <span
+                              className="minute-match"
+                              style={{ color: getScoreColor(minute.matchPercentage) }}
+                            >
+                              {minute.matchPercentage}%
+                            </span>
+                          </div>
+                          <p className="minute-observation">{minute.observation}</p>
+                          {minute.repCount && (
+                            <div className="minute-reps">
+                              Reps: Instructor {minute.repCount.instructor} vs User {minute.repCount.user}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {comparison.repComparison && (
+                  <div className="rep-comparison-section">
+                    <h5>Rep Count Analysis</h5>
+                    <div className="rep-stats">
+                      <span>Instructor: {comparison.repComparison.instructorTotal} reps</span>
+                      <span>User: {comparison.repComparison.userTotal} reps</span>
+                      <span className={comparison.repComparison.difference >= 0 ? 'rep-diff-positive' : 'rep-diff-negative'}>
+                        Difference: {comparison.repComparison.difference > 0 ? '+' : ''}{comparison.repComparison.difference}
+                      </span>
+                    </div>
+                    <p className="rep-analysis">{comparison.repComparison.analysis}</p>
+                  </div>
+                )}
+
+                {comparison.speedAnalysis && (
+                  <div className="speed-section">
+                    <h5>Speed & Pace Analysis</h5>
+                    <p>{comparison.speedAnalysis}</p>
+                  </div>
+                )}
+
+                {comparison.formIssues && comparison.formIssues.length > 0 && (
+                  <div className="form-issues-section">
+                    <h5>Form Issues</h5>
+                    <div className="form-issues-list">
+                      {comparison.formIssues.map((issue, i) => (
+                        <div key={i} className="form-issue-item">
+                          <span className="issue-timestamp">{issue.timestamp}</span>
+                          <span className="issue-description">{issue.issue}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="strengths-section">
                   <h5>Strengths</h5>
