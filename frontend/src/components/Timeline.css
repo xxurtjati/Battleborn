@@ -1,0 +1,116 @@
+.timeline-container {
+  background: #1a1a1a;
+  padding: 1.5rem;
+  border-radius: 12px;
+}
+
+.timeline {
+  position: relative;
+  height: 60px;
+  background: #2a2a2a;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: visible;
+}
+
+.timeline-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  border-radius: 8px;
+  pointer-events: none;
+  transition: width 0.1s linear;
+}
+
+.playhead {
+  position: absolute;
+  top: -5px;
+  width: 3px;
+  height: calc(100% + 10px);
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+  pointer-events: none;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+.cut-marker {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  transform: translateX(-50%);
+  z-index: 3;
+}
+
+.cut-marker-line {
+  width: 3px;
+  height: 100%;
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.cut-marker-handle {
+  position: absolute;
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #10b981;
+  color: white;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.cut-marker-handle::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid #10b981;
+}
+
+.cut-marker-time {
+  font-family: monospace;
+}
+
+.cut-marker-remove {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 1.2rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  padding: 0;
+}
+
+.cut-marker-remove:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.timeline-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #9ca3af;
+  font-family: monospace;
+}
