@@ -83,17 +83,39 @@ Analyze the following aspects:
 - Exercise execution quality
 - Energy and intensity level
 - Range of motion
+- Rep counting (count reps for both videos and compare)
+- Speed/pace comparison
 
-Provide:
-1. A match percentage (0-100%) indicating how closely the user follows the instructor
-2. Detailed analysis of strengths
-3. Areas for improvement
-4. Specific timestamps of major differences (if any)
+Provide DETAILED analysis including:
+1. Overall match percentage (0-100%)
+2. PER-MINUTE breakdown with match % for each minute
+3. Rep count comparison (instructor vs user)
+4. Speed analysis (too slow, too fast, or good pace)
+5. Form critique with specific timestamps
+6. Detailed strengths and areas for improvement
 
 Format your response as JSON with this structure:
 {
   "matchPercentage": <number 0-100>,
   "overallScore": "<letter grade A-F>",
+  "perMinuteAnalysis": [
+    {
+      "minute": 1,
+      "matchPercentage": <number 0-100>,
+      "observation": "<what happened in this minute>",
+      "repCount": {"instructor": <number>, "user": <number>}
+    }
+  ],
+  "repComparison": {
+    "instructorTotal": <number>,
+    "userTotal": <number>,
+    "difference": <number>,
+    "analysis": "<explanation of rep differences>"
+  },
+  "speedAnalysis": "<too slow/too fast/good pace with details>",
+  "formIssues": [
+    {"timestamp": "<MM:SS>", "issue": "<specific form problem>"}
+  ],
   "strengths": ["<strength 1>", "<strength 2>", ...],
   "improvements": ["<improvement 1>", "<improvement 2>", ...],
   "analysis": "<detailed paragraph analysis>",
