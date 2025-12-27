@@ -248,7 +248,7 @@ export const getProgress = async (req, res) => {
 // Download YouTube video with optional time range and quality
 export const downloadYouTubeVideo = async (req, res) => {
   try {
-    const { url, startTime, endTime, quality = 'balanced' } = req.body;
+    const { url, startTime, endTime, quality = 'balanced', intervalMinutes = 0, intervalSeconds = 0 } = req.body;
 
     if (!url) {
       return res.status(400).json({ error: 'YouTube URL is required' });
@@ -261,13 +261,30 @@ export const downloadYouTubeVideo = async (req, res) => {
     }
 
     const jobId = `youtube_${Date.now()}`;
+
+    // Calculate interval and segment count
+    const totalInterval = intervalMinutes * 60 + intervalSeconds;
+    const startSec = startTime || 0;
+    const endSec = endTime || 0;
+    const totalDuration = endSec - startSec;
+
+    let segmentCount = 0;
+    if (totalInterval > 0 && totalDuration > 0) {
+      segmentCount = Math.ceil(totalDuration / totalInterval);
+    }
+
     progressTracker.createJob(jobId, 100);
 
     // Return job ID immediately so client can poll for progress
-    res.json({ jobId, message: 'Download started' });
+    res.json({
+      jobId,
+      message: 'Download started',
+      segmentCount,
+      totalDuration
+    });
 
     // Process asynchronously
-    processYouTubeDownload(jobId, url, startTime, endTime, quality);
+    processYouTubeDownload(jobId, url, startTime, endTime, quality, totalInterval);
 
   } catch (error) {
     console.error('YouTube download error:', error);
@@ -279,12 +296,14 @@ export const downloadYouTubeVideo = async (req, res) => {
 };
 
 // Process YouTube download asynchronously with progress tracking
-async function processYouTubeDownload(jobId, url, startTime, endTime, quality) {
+async function processYouTubeDownload(jobId, url, startTime, endTime, quality, intervalLength = 0) {
   try {
     progressTracker.updateProgress(jobId, {
       status: 'downloading',
       progress: 5,
-      message: 'Starting download'
+      phase: 'download',
+      message: 'Starting download',
+      segments: []
     });
 
     const timestamp = Date.now();
@@ -306,15 +325,15 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality) {
       noPlaylist: true,
     };
 
+    const formatTime = (seconds) => {
+      const hrs = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    };
+
     // Add download sections if time range specified
     if (startTime !== undefined && endTime !== undefined) {
-      const formatTime = (seconds) => {
-        const hrs = Math.floor(seconds / 3600);
-        const mins = Math.floor((seconds % 3600) / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-      };
-
       const start = formatTime(startTime);
       const end = formatTime(endTime);
       options.downloadSections = `*${start}-${end}`;
@@ -322,30 +341,31 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality) {
 
     progressTracker.updateProgress(jobId, {
       progress: 10,
+      phase: 'download',
       message: 'Downloading video'
     });
 
     console.log('Downloading YouTube video:', url);
     console.log('Options:', options);
 
-    // Download with progress updates (simulate since yt-dlp doesn't provide real-time progress easily)
+    // Download with progress updates
     const progressInterval = setInterval(() => {
       const job = progressTracker.getJob(jobId);
-      if (job && job.progress < 70) {
+      if (job && job.progress < 35) {
         progressTracker.updateProgress(jobId, {
-          progress: Math.min(job.progress + 5, 70),
+          progress: Math.min(job.progress + 3, 35),
           message: 'Downloading video'
         });
       }
     }, 2000);
 
     await youtubedl(url, options);
-
     clearInterval(progressInterval);
 
     progressTracker.updateProgress(jobId, {
-      progress: 75,
-      message: 'Processing metadata'
+      progress: 40,
+      phase: 'download',
+      message: 'Download complete'
     });
 
     // Get video info
@@ -357,27 +377,167 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality) {
     });
 
     const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+    const videoDuration = metadata.format.duration;
 
-    const result = {
-      message: 'YouTube video downloaded successfully',
-      filename: outputFilename,
-      url: `/uploads/${outputFilename}`,
-      duration: metadata.format.duration,
-      size: metadata.format.size,
-      width: videoStream?.width,
-      height: videoStream?.height,
-      quality,
-      trimmed: startTime !== undefined && endTime !== undefined,
-      trimStart: startTime,
-      trimEnd: endTime
-    };
+    // If interval is specified, split into segments
+    if (intervalLength > 0 && videoDuration > 0) {
+      await splitYouTubeIntoSegments(
+        jobId,
+        outputPath,
+        videoDuration,
+        intervalLength,
+        startTime || 0,
+        timestamp
+      );
+    } else {
+      // No splitting, just return the single video
+      const result = {
+        message: 'YouTube video downloaded successfully',
+        filename: outputFilename,
+        url: `/uploads/${outputFilename}`,
+        duration: videoDuration,
+        size: metadata.format.size,
+        width: videoStream?.width,
+        height: videoStream?.height,
+        quality,
+        trimmed: startTime !== undefined && endTime !== undefined,
+        segments: []
+      };
 
-    progressTracker.completeJob(jobId, result);
+      progressTracker.completeJob(jobId, result);
+    }
 
   } catch (error) {
     console.error('YouTube download error:', error);
     progressTracker.failJob(jobId, error.message);
   }
+}
+
+// Split downloaded YouTube video into segments
+async function splitYouTubeIntoSegments(jobId, videoPath, totalDuration, intervalLength, startTimeOffset, timestamp) {
+  try {
+    progressTracker.updateProgress(jobId, {
+      progress: 45,
+      phase: 'split',
+      message: 'Preparing segments'
+    });
+
+    // Calculate cut points
+    const cutPoints = [];
+    let position = intervalLength;
+    while (position < totalDuration) {
+      cutPoints.push(position);
+      position += intervalLength;
+    }
+
+    const sortedCuts = [0, ...cutPoints, totalDuration];
+    const segmentCount = sortedCuts.length - 1;
+
+    // Initialize segment tracking
+    const segments = [];
+    for (let i = 0; i < segmentCount; i++) {
+      const start = sortedCuts[i];
+      const end = sortedCuts[i + 1];
+      const startWithOffset = startTimeOffset + start;
+      const endWithOffset = startTimeOffset + end;
+
+      segments.push({
+        index: i + 1,
+        status: 'pending',
+        filename: null,
+        timeRange: `${formatTimeDisplay(startWithOffset)}-${formatTimeDisplay(endWithOffset)}`,
+        startTime: startWithOffset,
+        endTime: endWithOffset,
+        duration: end - start,
+        size: null
+      });
+    }
+
+    progressTracker.updateProgress(jobId, {
+      segments
+    });
+
+    // Process each segment
+    for (let i = 0; i < segmentCount; i++) {
+      const start = sortedCuts[i];
+      const end = sortedCuts[i + 1];
+      const duration = end - start;
+
+      const outputFilename = `youtube_instructor_seg_${String(i + 1).padStart(2, '0')}_${timestamp}.mp4`;
+      const outputPath = path.join(outputsDir, outputFilename);
+
+      // Update segment status to processing
+      segments[i].status = 'processing';
+      progressTracker.updateProgress(jobId, {
+        progress: 45 + ((i / segmentCount) * 50),
+        message: `Creating segment ${i + 1}/${segmentCount}`,
+        segments: [...segments]
+      });
+
+      // Create segment using FFmpeg
+      await new Promise((resolve, reject) => {
+        ffmpeg(videoPath)
+          .setStartTime(start)
+          .setDuration(duration)
+          .output(outputPath)
+          .videoCodec('libx264')
+          .audioCodec('aac')
+          .on('end', () => {
+            console.log(`Segment ${i + 1} created successfully`);
+            resolve();
+          })
+          .on('error', (err) => {
+            console.error(`Error creating segment ${i + 1}:`, err);
+            reject(err);
+          })
+          .run();
+      });
+
+      // Get segment file size
+      const stats = await fs.stat(outputPath);
+
+      // Update segment status to completed
+      segments[i].status = 'completed';
+      segments[i].filename = outputFilename;
+      segments[i].size = stats.size;
+      segments[i].url = `/outputs/${outputFilename}`;
+
+      progressTracker.updateProgress(jobId, {
+        progress: 45 + (((i + 1) / segmentCount) * 50),
+        message: `Segment ${i + 1}/${segmentCount} complete`,
+        segments: [...segments]
+      });
+    }
+
+    // Delete the original downloaded file to save space
+    try {
+      await fs.unlink(videoPath);
+      console.log('Deleted original YouTube download file');
+    } catch (err) {
+      console.error('Failed to delete original file:', err);
+    }
+
+    // Complete the job
+    const result = {
+      message: 'YouTube video downloaded and split into segments',
+      segmentCount,
+      segments,
+      totalDuration
+    };
+
+    progressTracker.completeJob(jobId, result);
+
+  } catch (error) {
+    console.error('Segment split error:', error);
+    progressTracker.failJob(jobId, error.message);
+  }
+}
+
+// Helper function to format time for display
+function formatTimeDisplay(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
 // Delete video file

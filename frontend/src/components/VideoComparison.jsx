@@ -15,9 +15,12 @@ function VideoComparison() {
   const [youtubeStartTime, setYoutubeStartTime] = useState('');
   const [youtubeEndTime, setYoutubeEndTime] = useState('');
   const [youtubeQuality, setYoutubeQuality] = useState('balanced');
+  const [intervalMinutes, setIntervalMinutes] = useState(2);
+  const [intervalSeconds, setIntervalSeconds] = useState(30);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(null);
   const [youtubeVideo, setYoutubeVideo] = useState(null);
+  const [estimatedSegmentCount, setEstimatedSegmentCount] = useState(0);
 
   // UI states
   const [expandedResults, setExpandedResults] = useState(new Set());
@@ -36,6 +39,21 @@ function VideoComparison() {
     return parseInt(timeStr) || undefined;
   };
 
+  // Calculate estimated segment count when times or interval change
+  useEffect(() => {
+    const startSecs = parseTimeToSeconds(youtubeStartTime);
+    const endSecs = parseTimeToSeconds(youtubeEndTime);
+    const totalInterval = intervalMinutes * 60 + intervalSeconds;
+
+    if (startSecs !== undefined && endSecs !== undefined && totalInterval > 0) {
+      const totalDuration = endSecs - startSecs;
+      const count = Math.ceil(totalDuration / totalInterval);
+      setEstimatedSegmentCount(count);
+    } else {
+      setEstimatedSegmentCount(0);
+    }
+  }, [youtubeStartTime, youtubeEndTime, intervalMinutes, intervalSeconds]);
+
   // Poll for job progress
   const pollProgress = async (jobId) => {
     try {
@@ -48,10 +66,22 @@ function VideoComparison() {
         clearInterval(progressPollRef.current);
         setIsDownloading(false);
         setYoutubeVideo(job.result);
-        setInstructorSegments([{
-          filename: job.result.filename,
-          url: job.result.url
-        }]);
+
+        // Auto-load segments for comparison
+        if (job.result.segments && job.result.segments.length > 0) {
+          // Map segments to the format expected by comparison
+          const segments = job.result.segments.map(seg => ({
+            filename: seg.filename,
+            url: seg.url
+          }));
+          setInstructorSegments(segments);
+        } else if (job.result.filename) {
+          // Single video, no segments
+          setInstructorSegments([{
+            filename: job.result.filename,
+            url: job.result.url
+          }]);
+        }
       } else if (job.status === 'failed') {
         clearInterval(progressPollRef.current);
         setIsDownloading(false);
@@ -76,6 +106,12 @@ function VideoComparison() {
       return;
     }
 
+    const totalInterval = intervalMinutes * 60 + intervalSeconds;
+    if (totalInterval <= 0) {
+      alert('Please enter a valid segment interval');
+      return;
+    }
+
     setIsDownloading(true);
     setDownloadProgress(null);
 
@@ -84,7 +120,9 @@ function VideoComparison() {
         url: youtubeUrl,
         startTime: startSecs,
         endTime: endSecs,
-        quality: youtubeQuality
+        quality: youtubeQuality,
+        intervalMinutes,
+        intervalSeconds
       });
 
       const jobId = response.data.jobId;
@@ -259,6 +297,41 @@ function VideoComparison() {
             </div>
           </div>
 
+          <div className="interval-section">
+            <label className="section-label">⚡ Auto-Segment Into Intervals</label>
+            <div className="interval-inputs">
+              <div className="input-group">
+                <label>Minutes</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="30"
+                  value={intervalMinutes}
+                  onChange={(e) => setIntervalMinutes(parseInt(e.target.value) || 0)}
+                  disabled={isDownloading}
+                  className="interval-input"
+                />
+              </div>
+              <div className="input-group">
+                <label>Seconds</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  value={intervalSeconds}
+                  onChange={(e) => setIntervalSeconds(parseInt(e.target.value) || 0)}
+                  disabled={isDownloading}
+                  className="interval-input"
+                />
+              </div>
+            </div>
+            {estimatedSegmentCount > 0 && (
+              <div className="segment-preview">
+                → Will create <strong>{estimatedSegmentCount} segments</strong> of {intervalMinutes}m {intervalSeconds}s each
+              </div>
+            )}
+          </div>
+
           <div className="input-group">
             <label>Video Quality</label>
             <select
@@ -278,20 +351,67 @@ function VideoComparison() {
             onClick={handleDownloadYoutube}
             disabled={isDownloading || !youtubeUrl.trim()}
           >
-            {isDownloading ? 'Downloading...' : 'Download YouTube Segment'}
+            {isDownloading ? 'Downloading...' : 'Download & Create Segments'}
           </button>
 
           {downloadProgress && isDownloading && (
-            <ProgressIndicator
-              progress={downloadProgress.progress}
-              message={downloadProgress.message}
-              estimatedTimeRemaining={downloadProgress.estimatedTimeRemaining}
-            />
+            <>
+              <ProgressIndicator
+                progress={downloadProgress.progress}
+                message={downloadProgress.message}
+                estimatedTimeRemaining={downloadProgress.estimatedTimeRemaining}
+              />
+
+              {downloadProgress.segments && downloadProgress.segments.length > 0 && (
+                <div className="segment-progress-list">
+                  <h4>Segments Progress</h4>
+                  {downloadProgress.segments.map((segment, idx) => (
+                    <div key={idx} className={`segment-item segment-${segment.status}`}>
+                      <div className="segment-info">
+                        <span className="segment-status-icon">
+                          {segment.status === 'completed' && '✅'}
+                          {segment.status === 'processing' && '⏳'}
+                          {segment.status === 'pending' && '⬜'}
+                        </span>
+                        <span className="segment-name">Segment {segment.index}</span>
+                        <span className="segment-time">{segment.timeRange}</span>
+                      </div>
+                      {segment.size && (
+                        <span className="segment-size">
+                          {(segment.size / (1024 * 1024)).toFixed(1)} MB
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           {youtubeVideo && !isDownloading && (
-            <div className="youtube-success">
-              ✓ Downloaded: {youtubeVideo.filename} ({Math.round(youtubeVideo.duration)}s, {(youtubeVideo.size / (1024 * 1024)).toFixed(1)}MB) - Quality: {youtubeVideo.quality}
+            <div className="youtube-success-section">
+              {youtubeVideo.segments && youtubeVideo.segments.length > 0 ? (
+                <>
+                  <div className="youtube-success">
+                    ✓ Downloaded and split into {youtubeVideo.segments.length} segments - Ready for comparison!
+                  </div>
+                  <div className="completed-segments-list">
+                    {youtubeVideo.segments.map((segment, idx) => (
+                      <div key={idx} className="completed-segment">
+                        <span className="segment-icon">✅</span>
+                        <span className="segment-label">Segment {segment.index}:</span>
+                        <span className="segment-details">
+                          {segment.timeRange} ({(segment.size / (1024 * 1024)).toFixed(1)} MB)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="youtube-success">
+                  ✓ Downloaded: {youtubeVideo.filename} ({Math.round(youtubeVideo.duration)}s, {(youtubeVideo.size / (1024 * 1024)).toFixed(1)}MB) - Quality: {youtubeVideo.quality}
+                </div>
+              )}
             </div>
           )}
         </div>
