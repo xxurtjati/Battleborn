@@ -6,6 +6,7 @@ import {
   trimVideo,
   downloadYouTubeVideo,
   cleanupYouTubeVideos,
+  getProgress,
   listOutputs,
   deleteVideo
 } from '../controllers/videoController.js';
@@ -19,6 +20,7 @@ export default (upload) => {
   router.post('/trim', trimVideo);
   router.post('/download-youtube', downloadYouTubeVideo);
   router.post('/cleanup-youtube', cleanupYouTubeVideos);
+  router.get('/progress/:jobId', getProgress);
   router.get('/outputs', listOutputs);
   router.delete('/:filename', deleteVideo);
 

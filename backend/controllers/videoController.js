@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import youtubedl from 'youtube-dl-exec';
+import progressTracker from '../utils/progressTracker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -227,10 +228,27 @@ export const trimVideo = async (req, res) => {
   }
 };
 
-// Download YouTube video with optional time range
+// Get progress for a job
+export const getProgress = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const job = progressTracker.getJob(jobId);
+
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    res.json(job);
+  } catch (error) {
+    console.error('Get progress error:', error);
+    res.status(500).json({ error: 'Failed to get progress' });
+  }
+};
+
+// Download YouTube video with optional time range and quality
 export const downloadYouTubeVideo = async (req, res) => {
   try {
-    const { url, startTime, endTime } = req.body;
+    const { url, startTime, endTime, quality = 'balanced' } = req.body;
 
     if (!url) {
       return res.status(400).json({ error: 'YouTube URL is required' });
@@ -242,13 +260,47 @@ export const downloadYouTubeVideo = async (req, res) => {
       return res.status(400).json({ error: 'Invalid YouTube URL' });
     }
 
+    const jobId = `youtube_${Date.now()}`;
+    progressTracker.createJob(jobId, 100);
+
+    // Return job ID immediately so client can poll for progress
+    res.json({ jobId, message: 'Download started' });
+
+    // Process asynchronously
+    processYouTubeDownload(jobId, url, startTime, endTime, quality);
+
+  } catch (error) {
+    console.error('YouTube download error:', error);
+    res.status(500).json({
+      error: 'Failed to start YouTube download',
+      details: error.message
+    });
+  }
+};
+
+// Process YouTube download asynchronously with progress tracking
+async function processYouTubeDownload(jobId, url, startTime, endTime, quality) {
+  try {
+    progressTracker.updateProgress(jobId, {
+      status: 'downloading',
+      progress: 5,
+      message: 'Starting download'
+    });
+
     const timestamp = Date.now();
     const outputFilename = `youtube_${timestamp}.mp4`;
     const outputPath = path.join(uploadsDir, outputFilename);
 
+    // Quality format selection
+    const qualityFormats = {
+      fast: 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best',
+      balanced: 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
+      best: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+    };
+
     // Build yt-dlp options
     const options = {
-      format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      format: qualityFormats[quality] || qualityFormats.balanced,
       output: outputPath,
       mergeOutputFormat: 'mp4',
       noPlaylist: true,
@@ -256,7 +308,6 @@ export const downloadYouTubeVideo = async (req, res) => {
 
     // Add download sections if time range specified
     if (startTime !== undefined && endTime !== undefined) {
-      // Convert seconds to HH:MM:SS format
       const formatTime = (seconds) => {
         const hrs = Math.floor(seconds / 3600);
         const mins = Math.floor((seconds % 3600) / 60);
@@ -269,11 +320,33 @@ export const downloadYouTubeVideo = async (req, res) => {
       options.downloadSections = `*${start}-${end}`;
     }
 
+    progressTracker.updateProgress(jobId, {
+      progress: 10,
+      message: 'Downloading video'
+    });
+
     console.log('Downloading YouTube video:', url);
     console.log('Options:', options);
 
-    // Download the video
+    // Download with progress updates (simulate since yt-dlp doesn't provide real-time progress easily)
+    const progressInterval = setInterval(() => {
+      const job = progressTracker.getJob(jobId);
+      if (job && job.progress < 70) {
+        progressTracker.updateProgress(jobId, {
+          progress: Math.min(job.progress + 5, 70),
+          message: 'Downloading video'
+        });
+      }
+    }, 2000);
+
     await youtubedl(url, options);
+
+    clearInterval(progressInterval);
+
+    progressTracker.updateProgress(jobId, {
+      progress: 75,
+      message: 'Processing metadata'
+    });
 
     // Get video info
     const metadata = await new Promise((resolve, reject) => {
@@ -285,7 +358,7 @@ export const downloadYouTubeVideo = async (req, res) => {
 
     const videoStream = metadata.streams.find(s => s.codec_type === 'video');
 
-    res.json({
+    const result = {
       message: 'YouTube video downloaded successfully',
       filename: outputFilename,
       url: `/uploads/${outputFilename}`,
@@ -293,19 +366,19 @@ export const downloadYouTubeVideo = async (req, res) => {
       size: metadata.format.size,
       width: videoStream?.width,
       height: videoStream?.height,
+      quality,
       trimmed: startTime !== undefined && endTime !== undefined,
       trimStart: startTime,
       trimEnd: endTime
-    });
+    };
+
+    progressTracker.completeJob(jobId, result);
 
   } catch (error) {
     console.error('YouTube download error:', error);
-    res.status(500).json({
-      error: 'Failed to download YouTube video',
-      details: error.message
-    });
+    progressTracker.failJob(jobId, error.message);
   }
-};
+}
 
 // Delete video file
 export const deleteVideo = async (req, res) => {
