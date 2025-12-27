@@ -405,6 +405,7 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
       '--output', options.output,
       '--merge-output-format', 'mp4',
       '--no-playlist',
+      '--no-check-certificate',  // Skip SSL verification for environments with self-signed certs
       '--newline',  // Output progress on new lines for parsing
       '--progress'  // Show progress
     ];
