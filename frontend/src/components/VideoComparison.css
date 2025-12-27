@@ -974,3 +974,85 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Selector Buttons */
+.selector-buttons {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.upload-button {
+  padding: 1rem 1.5rem;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.upload-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.upload-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Upload Progress Bar */
+.upload-progress-bar {
+  height: 8px;
+  background: #3a3a3a;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0.75rem 0;
+}
+
+.upload-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+  border-radius: 4px;
+  transition: width 0.2s ease-out;
+}
+
+/* Segment List Preview */
+.segment-list-preview {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 1rem;
+  padding: 0.5rem;
+  background: #2a2a2a;
+  border-radius: 8px;
+  border: 1px solid #3a3a3a;
+}
+
+.segment-list-item {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  font-family: monospace;
+  color: #d1d5db;
+  border-bottom: 1px solid #3a3a3a;
+  text-align: left;
+}
+
+.segment-list-item:last-child {
+  border-bottom: none;
+}
+
+@media (max-width: 768px) {
+  .selector-buttons {
+    flex-direction: column;
+  }
+
+  .load-button,
+  .upload-button {
+    width: 100%;
+  }
+}

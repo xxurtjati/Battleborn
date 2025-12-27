@@ -30,7 +30,7 @@ await fs.mkdir(outputsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 app.use('/outputs', express.static(outputsDir));
 
-// Configure multer for file uploads
+// Configure multer for file uploads (to uploads directory)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir);
@@ -41,24 +41,48 @@ const storage = multer.diskStorage({
   }
 });
 
+// Configure multer for segment uploads (directly to outputs directory)
+const segmentStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, outputsDir);
+  },
+  filename: (req, file, cb) => {
+    // Use original filename with a timestamp prefix to avoid conflicts
+    const timestamp = Date.now();
+    const prefix = req.body.prefix || 'uploaded_seg';
+    const index = file.originalname.match(/(\d+)/)?.[1] || '01';
+    cb(null, `${prefix}_${String(index).padStart(2, '0')}_${timestamp}.mp4`);
+  }
+});
+
+const videoFilter = (req, file, cb) => {
+  const allowedTypes = /mp4|avi|mov|mkv|webm/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (mimetype && extname) {
+    return cb(null, true);
+  }
+  cb(new Error('Only video files are allowed'));
+};
+
 const upload = multer({
   storage,
   limits: {
     fileSize: 1024 * 1024 * 1024 // 1GB limit
   },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /mp4|avi|mov|mkv|webm/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-
-    if (mimetype && extname) {
-      return cb(null, true);
-    }
-    cb(new Error('Only video files are allowed'));
-  }
+  fileFilter: videoFilter
 });
 
-app.use('/api/video', videoRoutes(upload));
+const segmentUpload = multer({
+  storage: segmentStorage,
+  limits: {
+    fileSize: 1024 * 1024 * 1024 // 1GB limit
+  },
+  fileFilter: videoFilter
+});
+
+app.use('/api/video', videoRoutes(upload, segmentUpload));
 app.use('/api/compare', compareRoutes);
 
 app.get('/health', (req, res) => {

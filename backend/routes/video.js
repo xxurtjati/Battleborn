@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   uploadVideo,
+  uploadSegments,
   getVideoInfo,
   splitVideo,
   trimVideo,
@@ -11,10 +12,11 @@ import {
   deleteVideo
 } from '../controllers/videoController.js';
 
-export default (upload) => {
+export default (upload, segmentUpload) => {
   const router = express.Router();
 
   router.post('/upload', upload.single('video'), uploadVideo);
+  router.post('/upload-segments', segmentUpload.array('segments', 50), uploadSegments);
   router.get('/info/:filename', getVideoInfo);
   router.post('/split', splitVideo);
   router.post('/trim', trimVideo);

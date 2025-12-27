@@ -35,6 +35,57 @@ export const uploadVideo = async (req, res) => {
   }
 };
 
+// Upload pre-split segments directly to outputs
+export const uploadSegments = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No segment files uploaded' });
+    }
+
+    const segments = [];
+    const type = req.body.type || 'instructor'; // 'instructor' or 'user'
+
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+
+      // Get video metadata for each segment
+      const metadata = await new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(file.path, (err, data) => {
+          if (err) {
+            console.error(`FFprobe error for ${file.filename}:`, err);
+            resolve(null); // Continue even if metadata fails
+          } else {
+            resolve(data);
+          }
+        });
+      });
+
+      const videoStream = metadata?.streams?.find(s => s.codec_type === 'video');
+
+      segments.push({
+        index: i + 1,
+        filename: file.filename,
+        url: `/outputs/${file.filename}`,
+        size: file.size,
+        duration: metadata?.format?.duration || null,
+        width: videoStream?.width || null,
+        height: videoStream?.height || null,
+        type
+      });
+    }
+
+    res.json({
+      message: `${segments.length} segment(s) uploaded successfully`,
+      segmentCount: segments.length,
+      type,
+      segments
+    });
+  } catch (error) {
+    console.error('Segment upload error:', error);
+    res.status(500).json({ error: 'Failed to upload segments', details: error.message });
+  }
+};
+
 // Get video information
 export const getVideoInfo = (req, res) => {
   const { filename } = req.params;

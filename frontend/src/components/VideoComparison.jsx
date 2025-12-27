@@ -22,10 +22,17 @@ function VideoComparison() {
   const [youtubeVideo, setYoutubeVideo] = useState(null);
   const [estimatedSegmentCount, setEstimatedSegmentCount] = useState(0);
 
+  // Segment upload states
+  const [isUploadingInstructor, setIsUploadingInstructor] = useState(false);
+  const [isUploadingUser, setIsUploadingUser] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ instructor: 0, user: 0 });
+
   // UI states
   const [expandedResults, setExpandedResults] = useState(new Set());
 
   const progressPollRef = useRef(null);
+  const instructorFileInputRef = useRef(null);
+  const userFileInputRef = useRef(null);
 
   // Convert MM:SS format to seconds
   const parseTimeToSeconds = (timeStr) => {
@@ -163,6 +170,66 @@ function VideoComparison() {
       console.error('Error loading segments:', error);
       alert('Failed to load segments');
     }
+  };
+
+  // Upload pre-split segment files
+  const handleUploadSegments = async (files, type) => {
+    if (!files || files.length === 0) return;
+
+    const setUploading = type === 'instructor' ? setIsUploadingInstructor : setIsUploadingUser;
+    const setSegments = type === 'instructor' ? setInstructorSegments : setUserSegments;
+
+    setUploading(true);
+    setUploadProgress(prev => ({ ...prev, [type]: 0 }));
+
+    try {
+      const formData = new FormData();
+
+      // Sort files by name to maintain order
+      const sortedFiles = Array.from(files).sort((a, b) => a.name.localeCompare(b.name));
+
+      sortedFiles.forEach(file => {
+        formData.append('segments', file);
+      });
+      formData.append('type', type);
+      formData.append('prefix', `${type}_seg`);
+
+      const response = await axios.post('/api/video/upload-segments', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setUploadProgress(prev => ({ ...prev, [type]: percentCompleted }));
+        }
+      });
+
+      // Map segments to the format expected by comparison
+      const segments = response.data.segments.map(seg => ({
+        filename: seg.filename,
+        url: seg.url,
+        duration: seg.duration,
+        size: seg.size
+      }));
+
+      setSegments(segments);
+      alert(`${segments.length} segment(s) uploaded successfully!`);
+
+    } catch (error) {
+      console.error('Segment upload error:', error);
+      alert('Failed to upload segments: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setUploading(false);
+      setUploadProgress(prev => ({ ...prev, [type]: 0 }));
+    }
+  };
+
+  const handleInstructorFileChange = (e) => {
+    handleUploadSegments(e.target.files, 'instructor');
+    e.target.value = ''; // Reset input
+  };
+
+  const handleUserFileChange = (e) => {
+    handleUploadSegments(e.target.files, 'user');
+    e.target.value = ''; // Reset input
   };
 
   const handleCompare = async () => {
@@ -422,30 +489,92 @@ function VideoComparison() {
       <div className="segment-selectors">
         <div className="selector-section">
           <h3>Instructor Segments</h3>
-          <button
-            className="load-button"
-            onClick={() => handleLoadSegments('instructor')}
-            disabled={isComparing || isDownloading}
-          >
-            Load Instructor Segments
-          </button>
+          <div className="selector-buttons">
+            <button
+              className="load-button"
+              onClick={() => handleLoadSegments('instructor')}
+              disabled={isComparing || isDownloading || isUploadingInstructor}
+            >
+              Load from Outputs
+            </button>
+            <input
+              ref={instructorFileInputRef}
+              type="file"
+              accept="video/*"
+              multiple
+              onChange={handleInstructorFileChange}
+              style={{ display: 'none' }}
+            />
+            <button
+              className="upload-button"
+              onClick={() => instructorFileInputRef.current?.click()}
+              disabled={isComparing || isDownloading || isUploadingInstructor}
+            >
+              {isUploadingInstructor ? `Uploading... ${uploadProgress.instructor}%` : 'Upload Pre-Split Files'}
+            </button>
+          </div>
+          {isUploadingInstructor && (
+            <div className="upload-progress-bar">
+              <div className="upload-progress-fill" style={{ width: `${uploadProgress.instructor}%` }} />
+            </div>
+          )}
           <div className="segment-count">
             {instructorSegments.length} segments loaded
           </div>
+          {instructorSegments.length > 0 && (
+            <div className="segment-list-preview">
+              {instructorSegments.map((seg, idx) => (
+                <div key={idx} className="segment-list-item">
+                  {seg.filename}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="selector-section">
           <h3>User Segments</h3>
-          <button
-            className="load-button"
-            onClick={() => handleLoadSegments('user')}
-            disabled={isComparing || isDownloading}
-          >
-            Load User Segments
-          </button>
+          <div className="selector-buttons">
+            <button
+              className="load-button"
+              onClick={() => handleLoadSegments('user')}
+              disabled={isComparing || isDownloading || isUploadingUser}
+            >
+              Load from Outputs
+            </button>
+            <input
+              ref={userFileInputRef}
+              type="file"
+              accept="video/*"
+              multiple
+              onChange={handleUserFileChange}
+              style={{ display: 'none' }}
+            />
+            <button
+              className="upload-button"
+              onClick={() => userFileInputRef.current?.click()}
+              disabled={isComparing || isDownloading || isUploadingUser}
+            >
+              {isUploadingUser ? `Uploading... ${uploadProgress.user}%` : 'Upload Pre-Split Files'}
+            </button>
+          </div>
+          {isUploadingUser && (
+            <div className="upload-progress-bar">
+              <div className="upload-progress-fill" style={{ width: `${uploadProgress.user}%` }} />
+            </div>
+          )}
           <div className="segment-count">
             {userSegments.length} segments loaded
           </div>
+          {userSegments.length > 0 && (
+            <div className="segment-list-preview">
+              {userSegments.map((seg, idx) => (
+                <div key={idx} className="segment-list-item">
+                  {seg.filename}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
