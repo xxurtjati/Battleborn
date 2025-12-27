@@ -1,7 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import './Timeline.css';
 
-function Timeline({ duration, currentTime, cutPoints, onTimelineClick, onRemoveCutPoint }) {
+function Timeline({ duration, currentTime, cutPoints, trimStart, trimEnd, onTimelineClick, onRemoveCutPoint }) {
   const timelineRef = useRef(null);
 
   const handleClick = (e) => {
@@ -30,6 +30,48 @@ function Timeline({ duration, currentTime, cutPoints, onTimelineClick, onRemoveC
           className="playhead"
           style={{ left: `${(currentTime / duration) * 100}%` }}
         />
+
+        {/* Trim overlays - dimmed regions outside trim range */}
+        {trimStart > 0 && (
+          <div
+            className="trim-overlay"
+            style={{
+              left: 0,
+              width: `${(trimStart / duration) * 100}%`,
+            }}
+          />
+        )}
+        {trimEnd < duration && (
+          <div
+            className="trim-overlay"
+            style={{
+              left: `${(trimEnd / duration) * 100}%`,
+              width: `${((duration - trimEnd) / duration) * 100}%`,
+            }}
+          />
+        )}
+
+        {/* Trim markers */}
+        {trimStart > 0 && (
+          <div
+            className="trim-marker"
+            style={{ left: `${(trimStart / duration) * 100}%` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="trim-marker-line" />
+            <div className="trim-marker-handle">TRIM START</div>
+          </div>
+        )}
+        {trimEnd < duration && (
+          <div
+            className="trim-marker"
+            style={{ left: `${(trimEnd / duration) * 100}%` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="trim-marker-line" />
+            <div className="trim-marker-handle">TRIM END</div>
+          </div>
+        )}
 
         {cutPoints.map((time, index) => (
           <div

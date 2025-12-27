@@ -58,7 +58,7 @@ export const getVideoInfo = (req, res) => {
 // Split video into segments
 export const splitVideo = async (req, res) => {
   try {
-    const { filename, cutPoints, outputPrefix } = req.body;
+    const { filename, cutPoints, trimStart, trimEnd, outputPrefix } = req.body;
 
     if (!filename || !cutPoints || !Array.isArray(cutPoints)) {
       return res.status(400).json({ error: 'Invalid request data' });
@@ -69,7 +69,6 @@ export const splitVideo = async (req, res) => {
 
     // Validate cut points and create segments
     const segments = [];
-    const sortedCuts = [0, ...cutPoints.sort((a, b) => a - b)];
 
     // Get video duration
     const metadata = await new Promise((resolve, reject) => {
@@ -80,7 +79,11 @@ export const splitVideo = async (req, res) => {
     });
 
     const totalDuration = metadata.format.duration;
-    sortedCuts.push(totalDuration);
+    const effectiveTrimStart = trimStart || 0;
+    const effectiveTrimEnd = trimEnd || totalDuration;
+
+    const sortedCuts = [effectiveTrimStart, ...cutPoints.sort((a, b) => a - b)];
+    sortedCuts.push(effectiveTrimEnd);
 
     // Create segments
     for (let i = 0; i < sortedCuts.length - 1; i++) {
@@ -164,6 +167,59 @@ export const listOutputs = async (req, res) => {
   } catch (error) {
     console.error('List outputs error:', error);
     res.status(500).json({ error: 'Failed to list outputs' });
+  }
+};
+
+// Trim video to create a new trimmed file
+export const trimVideo = async (req, res) => {
+  try {
+    const { filename, trimStart, trimEnd, outputFilename } = req.body;
+
+    if (!filename || trimStart === undefined || trimEnd === undefined) {
+      return res.status(400).json({ error: 'Invalid request data' });
+    }
+
+    const videoPath = path.join(uploadsDir, filename);
+    const outputName = outputFilename || `trimmed_${Date.now()}.mp4`;
+    const outputPath = path.join(uploadsDir, outputName);
+
+    const duration = trimEnd - trimStart;
+
+    if (duration <= 0) {
+      return res.status(400).json({ error: 'Invalid trim range' });
+    }
+
+    // Create trimmed video
+    await new Promise((resolve, reject) => {
+      ffmpeg(videoPath)
+        .setStartTime(trimStart)
+        .setDuration(duration)
+        .output(outputPath)
+        .videoCodec('libx264')
+        .audioCodec('aac')
+        .on('end', () => {
+          console.log('Video trimmed successfully');
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error('Error trimming video:', err);
+          reject(err);
+        })
+        .run();
+    });
+
+    res.json({
+      message: 'Video trimmed successfully',
+      filename: outputName,
+      url: `/uploads/${outputName}`,
+      trimStart,
+      trimEnd,
+      duration
+    });
+
+  } catch (error) {
+    console.error('Trim error:', error);
+    res.status(500).json({ error: 'Failed to trim video', details: error.message });
   }
 };
 
