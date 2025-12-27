@@ -8,7 +8,7 @@ import progressTracker from '../utils/progressTracker.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Path to yt-dlp binary
+// Path to system yt-dlp binary (installed via pip)
 const YT_DLP_PATH = '/usr/local/bin/yt-dlp';
 
 // fluent-ffmpeg will use system ffmpeg if available
