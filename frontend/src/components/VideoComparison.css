@@ -797,3 +797,180 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Interval Section */
+.interval-section {
+  background: #2a2a2a;
+  padding: 1rem;
+  border-radius: 8px;
+  border-left: 4px solid #f59e0b;
+  margin: 1rem 0;
+}
+
+.section-label {
+  display: block;
+  font-weight: 600;
+  font-size: 1rem;
+  color: #f59e0b;
+  margin-bottom: 0.75rem;
+}
+
+.interval-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.interval-input {
+  padding: 0.75rem;
+  background: #1a1a1a;
+  border: 2px solid #3a3a3a;
+  border-radius: 6px;
+  color: white;
+  font-size: 1rem;
+  width: 100%;
+  transition: border-color 0.2s;
+}
+
+.interval-input:focus {
+  outline: none;
+  border-color: #f59e0b;
+}
+
+.segment-preview {
+  color: #e5e7eb;
+  font-size: 0.95rem;
+  padding: 0.5rem;
+  background: #1a1a1a;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.segment-preview strong {
+  color: #f59e0b;
+}
+
+/* Segment Progress List */
+.segment-progress-list {
+  background: #2a2a2a;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-top: 1rem;
+}
+
+.segment-progress-list h4 {
+  color: #667eea;
+  margin-bottom: 0.75rem;
+  font-size: 1rem;
+}
+
+.segment-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+  border-radius: 6px;
+  background: #1a1a1a;
+  border-left: 3px solid #3a3a3a;
+  transition: all 0.3s;
+}
+
+.segment-item.segment-completed {
+  border-left-color: #10b981;
+}
+
+.segment-item.segment-processing {
+  border-left-color: #f59e0b;
+  animation: pulse 1.5s infinite;
+}
+
+.segment-item.segment-pending {
+  opacity: 0.6;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.segment-info {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.segment-status-icon {
+  font-size: 1.2rem;
+  min-width: 24px;
+}
+
+.segment-name {
+  font-weight: 600;
+  color: #e5e7eb;
+  min-width: 80px;
+}
+
+.segment-time {
+  color: #9ca3af;
+  font-size: 0.9rem;
+  font-family: monospace;
+}
+
+.segment-size {
+  color: #9ca3af;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* Completed Segments List */
+.youtube-success-section {
+  margin-top: 1rem;
+}
+
+.completed-segments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 1rem;
+  background: #2a2a2a;
+  border-radius: 8px;
+}
+
+.completed-segment {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem;
+  background: #1a1a1a;
+  border-radius: 6px;
+  border-left: 3px solid #10b981;
+}
+
+.segment-icon {
+  font-size: 1rem;
+}
+
+.segment-label {
+  font-weight: 600;
+  color: #e5e7eb;
+  min-width: 80px;
+}
+
+.segment-details {
+  color: #9ca3af;
+  font-size: 0.9rem;
+  font-family: monospace;
+}
+
+@media (max-width: 768px) {
+  .interval-inputs {
+    grid-template-columns: 1fr;
+  }
+}
