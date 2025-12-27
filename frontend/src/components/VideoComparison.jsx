@@ -470,9 +470,34 @@ function VideoComparison() {
                         <span className="segment-details">
                           {segment.timeRange} ({(segment.size / (1024 * 1024)).toFixed(1)} MB)
                         </span>
+                        <a
+                          href={segment.url}
+                          download={segment.filename}
+                          className="segment-download-btn"
+                          title="Download this segment"
+                        >
+                          ⬇
+                        </a>
                       </div>
                     ))}
                   </div>
+                  <button
+                    className="download-all-btn"
+                    onClick={() => {
+                      youtubeVideo.segments.forEach((segment, idx) => {
+                        setTimeout(() => {
+                          const a = document.createElement('a');
+                          a.href = segment.url;
+                          a.download = segment.filename;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                        }, idx * 500); // Stagger downloads
+                      });
+                    }}
+                  >
+                    Download All Segments
+                  </button>
                 </>
               ) : (
                 <div className="youtube-success">
