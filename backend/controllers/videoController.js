@@ -2,14 +2,36 @@ import ffmpeg from 'fluent-ffmpeg';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import { spawn } from 'child_process';
+import fsSync from 'fs';
+import { spawn, execSync } from 'child_process';
 import progressTracker from '../utils/progressTracker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Path to system yt-dlp binary (installed via pip)
-const YT_DLP_PATH = '/usr/local/bin/yt-dlp';
+// Auto-detect yt-dlp binary path (works on macOS, Linux, etc.)
+const YT_DLP_PATH = (() => {
+  try {
+    // Try to find yt-dlp in PATH
+    return execSync('which yt-dlp', { encoding: 'utf8' }).trim();
+  } catch {
+    // Fallback to common paths
+    const fallbackPaths = [
+      '/opt/homebrew/bin/yt-dlp',  // macOS Homebrew (Apple Silicon)
+      '/usr/local/bin/yt-dlp',      // macOS Homebrew (Intel) / Linux pip
+      '/usr/bin/yt-dlp'             // Linux system package
+    ];
+    for (const p of fallbackPaths) {
+      try {
+        fsSync.accessSync(p);
+        return p;
+      } catch {}
+    }
+    return 'yt-dlp'; // Hope it's in PATH
+  }
+})();
+
+console.log('Using yt-dlp at:', YT_DLP_PATH);
 
 // fluent-ffmpeg will use system ffmpeg if available
 
