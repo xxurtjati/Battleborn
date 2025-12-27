@@ -2,14 +2,14 @@ import ffmpeg from 'fluent-ffmpeg';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import youtubedl from 'youtube-dl-exec';
+import { spawn } from 'child_process';
 import progressTracker from '../utils/progressTracker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configure youtube-dl-exec to use system yt-dlp
-youtubedl.ytDlpPath = '/usr/local/bin/yt-dlp';
+// Path to yt-dlp binary
+const YT_DLP_PATH = '/usr/local/bin/yt-dlp';
 
 // fluent-ffmpeg will use system ffmpeg if available
 
@@ -32,6 +32,57 @@ export const uploadVideo = async (req, res) => {
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ error: 'Failed to upload video' });
+  }
+};
+
+// Upload pre-split segments directly to outputs
+export const uploadSegments = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No segment files uploaded' });
+    }
+
+    const segments = [];
+    const type = req.body.type || 'instructor'; // 'instructor' or 'user'
+
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+
+      // Get video metadata for each segment
+      const metadata = await new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(file.path, (err, data) => {
+          if (err) {
+            console.error(`FFprobe error for ${file.filename}:`, err);
+            resolve(null); // Continue even if metadata fails
+          } else {
+            resolve(data);
+          }
+        });
+      });
+
+      const videoStream = metadata?.streams?.find(s => s.codec_type === 'video');
+
+      segments.push({
+        index: i + 1,
+        filename: file.filename,
+        url: `/outputs/${file.filename}`,
+        size: file.size,
+        duration: metadata?.format?.duration || null,
+        width: videoStream?.width || null,
+        height: videoStream?.height || null,
+        type
+      });
+    }
+
+    res.json({
+      message: `${segments.length} segment(s) uploaded successfully`,
+      segmentCount: segments.length,
+      type,
+      segments
+    });
+  } catch (error) {
+    console.error('Segment upload error:', error);
+    res.status(500).json({ error: 'Failed to upload segments', details: error.message });
   }
 };
 
@@ -348,19 +399,63 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
     console.log('Downloading YouTube video:', url);
     console.log('Options:', options);
 
-    // Download with progress updates
-    const progressInterval = setInterval(() => {
-      const job = progressTracker.getJob(jobId);
-      if (job && job.progress < 35) {
-        progressTracker.updateProgress(jobId, {
-          progress: Math.min(job.progress + 3, 35),
-          message: 'Downloading video'
-        });
-      }
-    }, 2000);
+    // Build yt-dlp command arguments
+    const args = [
+      '--format', options.format,
+      '--output', options.output,
+      '--merge-output-format', 'mp4',
+      '--no-playlist',
+      '--newline',  // Output progress on new lines for parsing
+      '--progress'  // Show progress
+    ];
 
-    await youtubedl(url, options);
-    clearInterval(progressInterval);
+    if (options.downloadSections) {
+      args.push('--download-sections', options.downloadSections);
+    }
+
+    args.push(url);
+
+    // Download with real progress tracking
+    await new Promise((resolve, reject) => {
+      const ytdlp = spawn(YT_DLP_PATH, args);
+      let lastProgress = 10;
+
+      ytdlp.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log('yt-dlp:', output.trim());
+
+        // Parse progress from yt-dlp output (format: "[download]  XX.X% of ...")
+        const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+        if (progressMatch) {
+          const downloadPercent = parseFloat(progressMatch[1]);
+          // Scale download progress from 10% to 35% of total job
+          const scaledProgress = 10 + (downloadPercent * 0.25);
+          if (scaledProgress > lastProgress) {
+            lastProgress = scaledProgress;
+            progressTracker.updateProgress(jobId, {
+              progress: Math.round(scaledProgress),
+              message: `Downloading video (${Math.round(downloadPercent)}%)`
+            });
+          }
+        }
+      });
+
+      ytdlp.stderr.on('data', (data) => {
+        console.error('yt-dlp stderr:', data.toString().trim());
+      });
+
+      ytdlp.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`yt-dlp exited with code ${code}`));
+        }
+      });
+
+      ytdlp.on('error', (err) => {
+        reject(err);
+      });
+    });
 
     progressTracker.updateProgress(jobId, {
       progress: 40,
