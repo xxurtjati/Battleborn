@@ -2,14 +2,36 @@ import ffmpeg from 'fluent-ffmpeg';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import { spawn } from 'child_process';
+import fsSync from 'fs';
+import { spawn, execSync } from 'child_process';
 import progressTracker from '../utils/progressTracker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Path to yt-dlp binary
-const YT_DLP_PATH = '/opt/homebrew/bin/yt-dlp';
+// Auto-detect yt-dlp binary path (works on macOS, Linux, etc.)
+const YT_DLP_PATH = (() => {
+  try {
+    // Try to find yt-dlp in PATH
+    return execSync('which yt-dlp', { encoding: 'utf8' }).trim();
+  } catch {
+    // Fallback to common paths
+    const fallbackPaths = [
+      '/opt/homebrew/bin/yt-dlp',  // macOS Homebrew (Apple Silicon)
+      '/usr/local/bin/yt-dlp',      // macOS Homebrew (Intel) / Linux pip
+      '/usr/bin/yt-dlp'             // Linux system package
+    ];
+    for (const p of fallbackPaths) {
+      try {
+        fsSync.accessSync(p);
+        return p;
+      } catch {}
+    }
+    return 'yt-dlp'; // Hope it's in PATH
+  }
+})();
+
+console.log('Using yt-dlp at:', YT_DLP_PATH);
 
 // fluent-ffmpeg will use system ffmpeg if available
 
@@ -210,19 +232,110 @@ export const splitVideo = async (req, res) => {
   }
 };
 
-// List all output segments
+// List all output segments with metadata and grouping
 export const listOutputs = async (req, res) => {
   try {
     const files = await fs.readdir(outputsDir);
-    const outputs = files.map(filename => ({
-      filename,
-      url: `/outputs/${filename}`
-    }));
+    const outputs = [];
 
-    res.json({ outputs });
+    for (const filename of files) {
+      if (!filename.endsWith('.mp4')) continue;
+
+      const filePath = path.join(outputsDir, filename);
+      const stats = await fs.stat(filePath);
+
+      // Extract batch info from filename patterns like:
+      // youtube_instructor_seg_01_1703069234.mp4
+      // workout_1703069500_part01.mp4
+      // instructor_seg_01_1703070000.mp4
+      const timestampMatch = filename.match(/(\d{13})/);
+      const timestamp = timestampMatch ? parseInt(timestampMatch[1]) : stats.mtimeMs;
+
+      // Get batch prefix (everything before the segment number)
+      const batchMatch = filename.match(/^(.+?)_(?:part|seg_)?\d+/);
+      const batchPrefix = batchMatch ? batchMatch[1] : filename;
+
+      outputs.push({
+        filename,
+        url: `/outputs/${filename}`,
+        size: stats.size,
+        createdAt: stats.birthtime || stats.mtime,
+        modifiedAt: stats.mtime,
+        batchId: `${batchPrefix}_${timestamp}`,
+        batchPrefix
+      });
+    }
+
+    // Sort by date (newest first)
+    outputs.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+
+    // Group by batch
+    const batches = {};
+    for (const output of outputs) {
+      if (!batches[output.batchId]) {
+        batches[output.batchId] = {
+          batchId: output.batchId,
+          batchPrefix: output.batchPrefix,
+          createdAt: output.createdAt,
+          segments: []
+        };
+      }
+      batches[output.batchId].segments.push(output);
+    }
+
+    // Sort segments within each batch by filename
+    Object.values(batches).forEach(batch => {
+      batch.segments.sort((a, b) => a.filename.localeCompare(b.filename));
+      batch.totalSize = batch.segments.reduce((sum, s) => sum + s.size, 0);
+      batch.segmentCount = batch.segments.length;
+    });
+
+    // Convert to array and sort by date
+    const batchList = Object.values(batches).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
+
+    res.json({
+      outputs,
+      batches: batchList,
+      totalFiles: outputs.length
+    });
   } catch (error) {
     console.error('List outputs error:', error);
     res.status(500).json({ error: 'Failed to list outputs' });
+  }
+};
+
+// Delete output segments
+export const deleteOutputs = async (req, res) => {
+  try {
+    const { filenames } = req.body;
+
+    if (!filenames || !Array.isArray(filenames)) {
+      return res.status(400).json({ error: 'filenames array required' });
+    }
+
+    let deletedCount = 0;
+    const errors = [];
+
+    for (const filename of filenames) {
+      try {
+        const filePath = path.join(outputsDir, filename);
+        await fs.unlink(filePath);
+        deletedCount++;
+      } catch (err) {
+        errors.push({ filename, error: err.message });
+      }
+    }
+
+    res.json({
+      message: `Deleted ${deletedCount} file(s)`,
+      deletedCount,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    console.error('Delete outputs error:', error);
+    res.status(500).json({ error: 'Failed to delete outputs' });
   }
 };
 
@@ -405,6 +518,7 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
       '--output', options.output,
       '--merge-output-format', 'mp4',
       '--no-playlist',
+      '--no-check-certificate',  // Skip SSL verification for environments with self-signed certs
       '--newline',  // Output progress on new lines for parsing
       '--progress'  // Show progress
     ];
@@ -419,16 +533,13 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
     await new Promise((resolve, reject) => {
       const ytdlp = spawn(YT_DLP_PATH, args);
       let lastProgress = 10;
+      const targetDuration = (endTime || 0) - (startTime || 0); // Total seconds to download
 
-      ytdlp.stdout.on('data', (data) => {
-        const output = data.toString();
-        console.log('yt-dlp:', output.trim());
-
-        // Parse progress from yt-dlp output (format: "[download]  XX.X% of ...")
-        const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
-        if (progressMatch) {
-          const downloadPercent = parseFloat(progressMatch[1]);
-          // Scale download progress from 10% to 35% of total job
+      const parseAndUpdateProgress = (output) => {
+        // Parse standard yt-dlp download progress (format: "[download]  XX.X% of ...")
+        const downloadMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+        if (downloadMatch) {
+          const downloadPercent = parseFloat(downloadMatch[1]);
           const scaledProgress = 10 + (downloadPercent * 0.25);
           if (scaledProgress > lastProgress) {
             lastProgress = scaledProgress;
@@ -437,11 +548,52 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
               message: `Downloading video (${Math.round(downloadPercent)}%)`
             });
           }
+          return;
         }
+
+        // Parse FFmpeg progress when using --download-sections (format: "time=00:05:30.00")
+        const timeMatch = output.match(/time=(\d+):(\d+):(\d+)/);
+        if (timeMatch && targetDuration > 0) {
+          const hours = parseInt(timeMatch[1]);
+          const minutes = parseInt(timeMatch[2]);
+          const seconds = parseInt(timeMatch[3]);
+          const processedSeconds = hours * 3600 + minutes * 60 + seconds;
+          const ffmpegPercent = Math.min(100, (processedSeconds / targetDuration) * 100);
+          const scaledProgress = 10 + (ffmpegPercent * 0.25);
+          if (scaledProgress > lastProgress) {
+            lastProgress = scaledProgress;
+            progressTracker.updateProgress(jobId, {
+              progress: Math.round(scaledProgress),
+              message: `Processing video (${Math.round(ffmpegPercent)}%)`
+            });
+          }
+          return;
+        }
+
+        // Parse frame-based progress (format: "frame= 1234")
+        const frameMatch = output.match(/frame=\s*(\d+)/);
+        if (frameMatch && lastProgress < 35) {
+          // Just show activity - we don't know total frames
+          const frames = parseInt(frameMatch[1]);
+          if (frames % 500 === 0) { // Update every 500 frames
+            progressTracker.updateProgress(jobId, {
+              message: `Processing video (${frames} frames)`
+            });
+          }
+        }
+      };
+
+      ytdlp.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log('yt-dlp stdout:', output.trim());
+        parseAndUpdateProgress(output);
       });
 
       ytdlp.stderr.on('data', (data) => {
-        console.error('yt-dlp stderr:', data.toString().trim());
+        const output = data.toString();
+        console.log('yt-dlp stderr:', output.trim());
+        // FFmpeg progress often goes to stderr
+        parseAndUpdateProgress(output);
       });
 
       ytdlp.on('close', (code) => {

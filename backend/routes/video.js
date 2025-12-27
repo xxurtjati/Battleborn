@@ -9,6 +9,7 @@ import {
   cleanupYouTubeVideos,
   getProgress,
   listOutputs,
+  deleteOutputs,
   deleteVideo
 } from '../controllers/videoController.js';
 
@@ -24,6 +25,7 @@ export default (upload, segmentUpload) => {
   router.post('/cleanup-youtube', cleanupYouTubeVideos);
   router.get('/progress/:jobId', getProgress);
   router.get('/outputs', listOutputs);
+  router.post('/outputs/delete', deleteOutputs);
   router.delete('/:filename', deleteVideo);
 
   return router;
