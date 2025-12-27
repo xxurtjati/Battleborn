@@ -2,14 +2,14 @@ import ffmpeg from 'fluent-ffmpeg';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import youtubedl from 'youtube-dl-exec';
+import { spawn } from 'child_process';
 import progressTracker from '../utils/progressTracker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configure youtube-dl-exec to use system yt-dlp
-youtubedl.ytDlpPath = '/usr/local/bin/yt-dlp';
+// Path to yt-dlp binary
+const YT_DLP_PATH = '/usr/local/bin/yt-dlp';
 
 // fluent-ffmpeg will use system ffmpeg if available
 
@@ -348,19 +348,63 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
     console.log('Downloading YouTube video:', url);
     console.log('Options:', options);
 
-    // Download with progress updates
-    const progressInterval = setInterval(() => {
-      const job = progressTracker.getJob(jobId);
-      if (job && job.progress < 35) {
-        progressTracker.updateProgress(jobId, {
-          progress: Math.min(job.progress + 3, 35),
-          message: 'Downloading video'
-        });
-      }
-    }, 2000);
+    // Build yt-dlp command arguments
+    const args = [
+      '--format', options.format,
+      '--output', options.output,
+      '--merge-output-format', 'mp4',
+      '--no-playlist',
+      '--newline',  // Output progress on new lines for parsing
+      '--progress'  // Show progress
+    ];
 
-    await youtubedl(url, options);
-    clearInterval(progressInterval);
+    if (options.downloadSections) {
+      args.push('--download-sections', options.downloadSections);
+    }
+
+    args.push(url);
+
+    // Download with real progress tracking
+    await new Promise((resolve, reject) => {
+      const ytdlp = spawn(YT_DLP_PATH, args);
+      let lastProgress = 10;
+
+      ytdlp.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log('yt-dlp:', output.trim());
+
+        // Parse progress from yt-dlp output (format: "[download]  XX.X% of ...")
+        const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+        if (progressMatch) {
+          const downloadPercent = parseFloat(progressMatch[1]);
+          // Scale download progress from 10% to 35% of total job
+          const scaledProgress = 10 + (downloadPercent * 0.25);
+          if (scaledProgress > lastProgress) {
+            lastProgress = scaledProgress;
+            progressTracker.updateProgress(jobId, {
+              progress: Math.round(scaledProgress),
+              message: `Downloading video (${Math.round(downloadPercent)}%)`
+            });
+          }
+        }
+      });
+
+      ytdlp.stderr.on('data', (data) => {
+        console.error('yt-dlp stderr:', data.toString().trim());
+      });
+
+      ytdlp.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`yt-dlp exited with code ${code}`));
+        }
+      });
+
+      ytdlp.on('error', (err) => {
+        reject(err);
+      });
+    });
 
     progressTracker.updateProgress(jobId, {
       progress: 40,
