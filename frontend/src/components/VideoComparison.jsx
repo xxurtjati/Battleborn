@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import ProgressIndicator from './ProgressIndicator';
+import SegmentPicker from './SegmentPicker';
 import './VideoComparison.css';
 
 function VideoComparison() {
@@ -8,7 +9,10 @@ function VideoComparison() {
   const [userSegments, setUserSegments] = useState([]);
   const [comparisons, setComparisons] = useState([]);
   const [isComparing, setIsComparing] = useState(false);
-  const [overallMatch, setOverallMatch] = useState(null);
+
+  // Segment picker modal state
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerType, setPickerType] = useState(null); // 'instructor' or 'user'
 
   // YouTube download states
   const [youtubeUrl, setYoutubeUrl] = useState('');
@@ -155,20 +159,16 @@ function VideoComparison() {
     };
   }, []);
 
-  const handleLoadSegments = async (type) => {
-    try {
-      const response = await axios.get('/api/video/outputs');
-      const allSegments = response.data.outputs;
+  const handleLoadSegments = (type) => {
+    setPickerType(type);
+    setPickerOpen(true);
+  };
 
-      // Allow user to manually select which segments belong to which video
-      if (type === 'instructor') {
-        setInstructorSegments(allSegments);
-      } else {
-        setUserSegments(allSegments);
-      }
-    } catch (error) {
-      console.error('Error loading segments:', error);
-      alert('Failed to load segments');
+  const handleSegmentsSelected = (segments) => {
+    if (pickerType === 'instructor') {
+      setInstructorSegments(segments);
+    } else {
+      setUserSegments(segments);
     }
   };
 
@@ -520,7 +520,7 @@ function VideoComparison() {
               onClick={() => handleLoadSegments('instructor')}
               disabled={isComparing || isDownloading || isUploadingInstructor}
             >
-              Load from Outputs
+              Browse Saved Segments
             </button>
             <input
               ref={instructorFileInputRef}
@@ -565,7 +565,7 @@ function VideoComparison() {
               onClick={() => handleLoadSegments('user')}
               disabled={isComparing || isDownloading || isUploadingUser}
             >
-              Load from Outputs
+              Browse Saved Segments
             </button>
             <input
               ref={userFileInputRef}
@@ -861,6 +861,13 @@ function VideoComparison() {
           })}
         </div>
       )}
+
+      <SegmentPicker
+        isOpen={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={handleSegmentsSelected}
+        type={pickerType}
+      />
     </div>
   );
 }

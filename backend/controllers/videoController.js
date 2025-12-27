@@ -210,19 +210,110 @@ export const splitVideo = async (req, res) => {
   }
 };
 
-// List all output segments
+// List all output segments with metadata and grouping
 export const listOutputs = async (req, res) => {
   try {
     const files = await fs.readdir(outputsDir);
-    const outputs = files.map(filename => ({
-      filename,
-      url: `/outputs/${filename}`
-    }));
+    const outputs = [];
 
-    res.json({ outputs });
+    for (const filename of files) {
+      if (!filename.endsWith('.mp4')) continue;
+
+      const filePath = path.join(outputsDir, filename);
+      const stats = await fs.stat(filePath);
+
+      // Extract batch info from filename patterns like:
+      // youtube_instructor_seg_01_1703069234.mp4
+      // workout_1703069500_part01.mp4
+      // instructor_seg_01_1703070000.mp4
+      const timestampMatch = filename.match(/(\d{13})/);
+      const timestamp = timestampMatch ? parseInt(timestampMatch[1]) : stats.mtimeMs;
+
+      // Get batch prefix (everything before the segment number)
+      const batchMatch = filename.match(/^(.+?)_(?:part|seg_)?\d+/);
+      const batchPrefix = batchMatch ? batchMatch[1] : filename;
+
+      outputs.push({
+        filename,
+        url: `/outputs/${filename}`,
+        size: stats.size,
+        createdAt: stats.birthtime || stats.mtime,
+        modifiedAt: stats.mtime,
+        batchId: `${batchPrefix}_${timestamp}`,
+        batchPrefix
+      });
+    }
+
+    // Sort by date (newest first)
+    outputs.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+
+    // Group by batch
+    const batches = {};
+    for (const output of outputs) {
+      if (!batches[output.batchId]) {
+        batches[output.batchId] = {
+          batchId: output.batchId,
+          batchPrefix: output.batchPrefix,
+          createdAt: output.createdAt,
+          segments: []
+        };
+      }
+      batches[output.batchId].segments.push(output);
+    }
+
+    // Sort segments within each batch by filename
+    Object.values(batches).forEach(batch => {
+      batch.segments.sort((a, b) => a.filename.localeCompare(b.filename));
+      batch.totalSize = batch.segments.reduce((sum, s) => sum + s.size, 0);
+      batch.segmentCount = batch.segments.length;
+    });
+
+    // Convert to array and sort by date
+    const batchList = Object.values(batches).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
+
+    res.json({
+      outputs,
+      batches: batchList,
+      totalFiles: outputs.length
+    });
   } catch (error) {
     console.error('List outputs error:', error);
     res.status(500).json({ error: 'Failed to list outputs' });
+  }
+};
+
+// Delete output segments
+export const deleteOutputs = async (req, res) => {
+  try {
+    const { filenames } = req.body;
+
+    if (!filenames || !Array.isArray(filenames)) {
+      return res.status(400).json({ error: 'filenames array required' });
+    }
+
+    let deletedCount = 0;
+    const errors = [];
+
+    for (const filename of filenames) {
+      try {
+        const filePath = path.join(outputsDir, filename);
+        await fs.unlink(filePath);
+        deletedCount++;
+      } catch (err) {
+        errors.push({ filename, error: err.message });
+      }
+    }
+
+    res.json({
+      message: `Deleted ${deletedCount} file(s)`,
+      deletedCount,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    console.error('Delete outputs error:', error);
+    res.status(500).json({ error: 'Failed to delete outputs' });
   }
 };
 
