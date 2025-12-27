@@ -420,16 +420,13 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
     await new Promise((resolve, reject) => {
       const ytdlp = spawn(YT_DLP_PATH, args);
       let lastProgress = 10;
+      const targetDuration = (endTime || 0) - (startTime || 0); // Total seconds to download
 
-      ytdlp.stdout.on('data', (data) => {
-        const output = data.toString();
-        console.log('yt-dlp:', output.trim());
-
-        // Parse progress from yt-dlp output (format: "[download]  XX.X% of ...")
-        const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
-        if (progressMatch) {
-          const downloadPercent = parseFloat(progressMatch[1]);
-          // Scale download progress from 10% to 35% of total job
+      const parseAndUpdateProgress = (output) => {
+        // Parse standard yt-dlp download progress (format: "[download]  XX.X% of ...")
+        const downloadMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+        if (downloadMatch) {
+          const downloadPercent = parseFloat(downloadMatch[1]);
           const scaledProgress = 10 + (downloadPercent * 0.25);
           if (scaledProgress > lastProgress) {
             lastProgress = scaledProgress;
@@ -438,11 +435,52 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
               message: `Downloading video (${Math.round(downloadPercent)}%)`
             });
           }
+          return;
         }
+
+        // Parse FFmpeg progress when using --download-sections (format: "time=00:05:30.00")
+        const timeMatch = output.match(/time=(\d+):(\d+):(\d+)/);
+        if (timeMatch && targetDuration > 0) {
+          const hours = parseInt(timeMatch[1]);
+          const minutes = parseInt(timeMatch[2]);
+          const seconds = parseInt(timeMatch[3]);
+          const processedSeconds = hours * 3600 + minutes * 60 + seconds;
+          const ffmpegPercent = Math.min(100, (processedSeconds / targetDuration) * 100);
+          const scaledProgress = 10 + (ffmpegPercent * 0.25);
+          if (scaledProgress > lastProgress) {
+            lastProgress = scaledProgress;
+            progressTracker.updateProgress(jobId, {
+              progress: Math.round(scaledProgress),
+              message: `Processing video (${Math.round(ffmpegPercent)}%)`
+            });
+          }
+          return;
+        }
+
+        // Parse frame-based progress (format: "frame= 1234")
+        const frameMatch = output.match(/frame=\s*(\d+)/);
+        if (frameMatch && lastProgress < 35) {
+          // Just show activity - we don't know total frames
+          const frames = parseInt(frameMatch[1]);
+          if (frames % 500 === 0) { // Update every 500 frames
+            progressTracker.updateProgress(jobId, {
+              message: `Processing video (${frames} frames)`
+            });
+          }
+        }
+      };
+
+      ytdlp.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log('yt-dlp stdout:', output.trim());
+        parseAndUpdateProgress(output);
       });
 
       ytdlp.stderr.on('data', (data) => {
-        console.error('yt-dlp stderr:', data.toString().trim());
+        const output = data.toString();
+        console.log('yt-dlp stderr:', output.trim());
+        // FFmpeg progress often goes to stderr
+        parseAndUpdateProgress(output);
       });
 
       ytdlp.on('close', (code) => {
