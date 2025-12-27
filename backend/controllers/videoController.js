@@ -1,6 +1,4 @@
 import ffmpeg from 'fluent-ffmpeg';
-import ffmpegStatic from 'ffmpeg-static';
-import ffprobeStatic from 'ffprobe-static';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
@@ -8,9 +6,7 @@ import fs from 'fs/promises';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Set ffmpeg paths
-ffmpeg.setFfmpegPath(ffmpegStatic);
-ffmpeg.setFfprobePath(ffprobeStatic.path);
+// fluent-ffmpeg will use system ffmpeg if available
 
 const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
 const outputsDir = path.join(__dirname, '..', '..', 'outputs');
