@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Path to yt-dlp binary
-const YT_DLP_PATH = '/usr/local/bin/yt-dlp';
+const YT_DLP_PATH = '/opt/homebrew/bin/yt-dlp';
 
 // fluent-ffmpeg will use system ffmpeg if available
 
