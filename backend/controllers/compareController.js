@@ -8,33 +8,18 @@ const __dirname = path.dirname(__filename);
 
 const outputsDir = path.join(__dirname, '..', '..', 'outputs');
 
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
 // Store comparison results (in production, use a database)
 const comparisonResults = new Map();
 
-// Helper function to upload video file to Gemini
-async function uploadToGemini(filePath, mimeType) {
-  const uploadResult = await genAI.uploadFile(filePath, {
-    mimeType,
-    displayName: path.basename(filePath)
-  });
-
-  return uploadResult.file;
-}
-
-// Helper function to wait for file processing
-async function waitForFileActive(fileName) {
-  let file = await genAI.getFile(fileName);
-  while (file.state === 'PROCESSING') {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    file = await genAI.getFile(fileName);
-  }
-  if (file.state === 'FAILED') {
-    throw new Error('Video processing failed');
-  }
-  return file;
+// Helper function to convert video to base64 for inline upload
+async function fileToGenerativePart(filePath, mimeType) {
+  const data = await fs.readFile(filePath);
+  return {
+    inlineData: {
+      data: data.toString('base64'),
+      mimeType
+    }
+  };
 }
 
 // Compare two video segments
@@ -59,16 +44,15 @@ export const compareVideos = async (req, res) => {
     await fs.access(instructorPath);
     await fs.access(userPath);
 
-    // Upload videos to Gemini
-    const instructorFile = await uploadToGemini(instructorPath, 'video/mp4');
-    const userFile = await uploadToGemini(userPath, 'video/mp4');
+    // Convert videos to inline data (base64)
+    const instructorPart = await fileToGenerativePart(instructorPath, 'video/mp4');
+    const userPart = await fileToGenerativePart(userPath, 'video/mp4');
 
-    // Wait for processing
-    await waitForFileActive(instructorFile.name);
-    await waitForFileActive(userFile.name);
+    // Initialize Gemini AI (do this here to ensure .env is loaded)
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
     // Create the model
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3-pro-preview' });
 
     // Generate comparison
     const prompt = `You are an expert HIIT workout coach analyzing video submissions.
@@ -125,18 +109,8 @@ Format your response as JSON with this structure:
 }`;
 
     const result = await model.generateContent([
-      {
-        fileData: {
-          mimeType: instructorFile.mimeType,
-          fileUri: instructorFile.uri
-        }
-      },
-      {
-        fileData: {
-          mimeType: userFile.mimeType,
-          fileUri: userFile.uri
-        }
-      },
+      instructorPart,
+      userPart,
       { text: prompt }
     ]);
 
