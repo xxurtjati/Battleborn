@@ -24,11 +24,87 @@ function ComparisonPage() {
   const [results, setResults] = useState([]);
   const [overallScore, setOverallScore] = useState(null);
   
+  // Expanded segment details state
+  const [expandedSegments, setExpandedSegments] = useState({});
+  
   // Progress polling ref
   const progressPollRef = useRef(null);
   
   // Validation
   const [validationErrors, setValidationErrors] = useState([]);
+
+  // Toggle segment expansion
+  const toggleSegmentExpansion = (idx) => {
+    setExpandedSegments(prev => ({
+      ...prev,
+      [idx]: !prev[idx]
+    }));
+  };
+
+  // Calculate overall stats from results
+  const calculateOverallStats = () => {
+    if (results.length === 0) return null;
+    
+    let totalRepDeficit = 0;
+    const grades = [];
+    
+    results.forEach(result => {
+      if (result.repComparison?.difference) {
+        totalRepDeficit += result.repComparison.difference;
+      }
+      if (result.overallScore) {
+        grades.push(result.overallScore);
+      }
+    });
+    
+    // Calculate average grade
+    const gradeValues = { 'A+': 4.3, 'A': 4.0, 'A-': 3.7, 'B+': 3.3, 'B': 3.0, 'B-': 2.7, 
+                         'C+': 2.3, 'C': 2.0, 'C-': 1.7, 'D+': 1.3, 'D': 1.0, 'D-': 0.7, 'F': 0 };
+    const avgGradeValue = grades.length > 0 
+      ? grades.reduce((sum, g) => sum + (gradeValues[g] || 2.0), 0) / grades.length 
+      : 0;
+    
+    let avgGrade = 'C';
+    for (const [grade, value] of Object.entries(gradeValues)) {
+      if (avgGradeValue >= value - 0.15) {
+        avgGrade = grade;
+        break;
+      }
+    }
+    
+    return {
+      totalRepDeficit,
+      avgGrade,
+      segmentCount: results.length
+    };
+  };
+
+  // Get match percentage color class
+  const getMatchClass = (percent) => {
+    if (percent >= 85) return 'match-high';
+    if (percent >= 65) return 'match-medium';
+    return 'match-low';
+  };
+
+  // Get grade color class
+  const getGradeClass = (grade) => {
+    if (!grade) return 'grade-C';
+    const letter = grade.charAt(0).toUpperCase();
+    if (letter === 'A') return 'grade-A';
+    if (letter === 'B') return 'grade-B';
+    if (letter === 'C') return 'grade-C';
+    return 'grade-D';
+  };
+
+  // Extract exercise name from observation
+  const extractExerciseName = (observation) => {
+    if (!observation) return 'Exercise';
+    const colonIndex = observation.indexOf(':');
+    if (colonIndex > 0 && colonIndex < 40) {
+      return observation.substring(0, colonIndex).trim();
+    }
+    return observation.substring(0, 30) + (observation.length > 30 ? '...' : '');
+  };
   
   // Cleanup on unmount
   useEffect(() => {
@@ -373,7 +449,36 @@ function ComparisonPage() {
         <div className="results-section">
           <h2>🏆 Comparison Results</h2>
           
-          {/* Overall Score */}
+          {/* Overall Stats Bar */}
+          {(() => {
+            const stats = calculateOverallStats();
+            return stats && (
+              <div className="overall-stats-bar">
+                <div className="stat-card">
+                  <span className="stat-value">{overallScore}%</span>
+                  <span className="stat-label">Average Match</span>
+                </div>
+                <div className="stat-card">
+                  <span className={`stat-value grade-badge ${getGradeClass(stats.avgGrade)}`}>
+                    {stats.avgGrade}
+                  </span>
+                  <span className="stat-label">Overall Grade</span>
+                </div>
+                <div className="stat-card">
+                  <span className={`stat-value ${stats.totalRepDeficit < 0 ? 'deficit' : 'surplus'}`}>
+                    {stats.totalRepDeficit > 0 ? '+' : ''}{stats.totalRepDeficit}
+                  </span>
+                  <span className="stat-label">Total Rep Difference</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-value">{stats.segmentCount}</span>
+                  <span className="stat-label">Segments Analyzed</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Overall Score Circle */}
           {overallScore !== null && (
             <div className="overall-score">
               <div className="score-circle">
@@ -383,34 +488,165 @@ function ComparisonPage() {
             </div>
           )}
 
-          {/* Individual Results */}
-          <div className="individual-results">
+          {/* Individual Results - Enhanced Cards */}
+          <div className="individual-results enhanced">
             {results.map((result, idx) => (
-              <div key={idx} className="result-card">
-                <div className="result-header">
-                  <h4>Segment {idx + 1}</h4>
-                  <span className="result-score">{result.matchPercentage}%</span>
+              <div key={idx} className={`result-card enhanced ${expandedSegments[idx] ? 'expanded' : ''}`}>
+                {/* Card Header */}
+                <div className="result-header enhanced" onClick={() => toggleSegmentExpansion(idx)}>
+                  <div className="header-left">
+                    <h4>Segment {idx + 1}</h4>
+                    {result.overallScore && (
+                      <span className={`grade-badge ${getGradeClass(result.overallScore)}`}>
+                        {result.overallScore}
+                      </span>
+                    )}
+                  </div>
+                  <div className="header-right">
+                    <span className={`result-score ${getMatchClass(result.matchPercentage)}`}>
+                      {result.matchPercentage}%
+                    </span>
+                    <span className="expand-icon">{expandedSegments[idx] ? '▼' : '▶'}</span>
+                  </div>
                 </div>
-                
+
+                {/* Strengths Section */}
                 {result.strengths && result.strengths.length > 0 && (
                   <div className="result-section strengths">
                     <h5>✅ Strengths</h5>
                     <ul>
-                      {result.strengths.slice(0, 3).map((strength, i) => (
+                      {result.strengths.map((strength, i) => (
                         <li key={i}>{strength}</li>
                       ))}
                     </ul>
                   </div>
                 )}
 
+                {/* Improvements Section */}
                 {result.improvements && result.improvements.length > 0 && (
                   <div className="result-section improvements">
                     <h5>📈 Areas to Improve</h5>
                     <ul>
-                      {result.improvements.slice(0, 3).map((improvement, i) => (
+                      {result.improvements.map((improvement, i) => (
                         <li key={i}>{improvement}</li>
                       ))}
                     </ul>
+                  </div>
+                )}
+
+                {/* Expandable Detailed Section */}
+                {expandedSegments[idx] && (
+                  <div className="result-details">
+                    {/* Per-Minute Analysis Grid */}
+                    {result.perMinuteAnalysis && result.perMinuteAnalysis.length > 0 && (
+                      <div className="result-section minute-breakdown">
+                        <h5>⏱️ Minute-by-Minute Breakdown</h5>
+                        <div className="minute-grid">
+                          {result.perMinuteAnalysis.map((minute, i) => (
+                            <div key={i} className="minute-card">
+                              <div className="minute-header">
+                                <span className="minute-number">Minute {minute.minute}</span>
+                                <span className={`minute-match ${getMatchClass(minute.matchPercentage)}`}>
+                                  {minute.matchPercentage}%
+                                </span>
+                              </div>
+                              <div className="minute-exercise">
+                                {extractExerciseName(minute.observation)}
+                              </div>
+                              <p className="minute-observation">{minute.observation}</p>
+                              {minute.repCount && (
+                                <div className="minute-reps">
+                                  <span className="rep-instructor">Instructor: {minute.repCount.instructor}</span>
+                                  <span className="rep-divider">|</span>
+                                  <span className="rep-user">You: {minute.repCount.user}</span>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Rep Comparison Summary */}
+                    {result.repComparison && (
+                      <div className="result-section rep-summary">
+                        <h5>🔢 Rep Summary</h5>
+                        <div className="rep-summary-box">
+                          <div className="rep-row">
+                            <span>Instructor Total:</span>
+                            <span className="rep-value">{result.repComparison.instructorTotal} reps</span>
+                          </div>
+                          <div className="rep-row">
+                            <span>Your Total:</span>
+                            <span className="rep-value">{result.repComparison.userTotal} reps</span>
+                          </div>
+                          <div className="rep-row total">
+                            <span>Difference:</span>
+                            <span className={`rep-value ${result.repComparison.difference < 0 ? 'deficit' : 'surplus'}`}>
+                              {result.repComparison.difference > 0 ? '+' : ''}{result.repComparison.difference} reps
+                            </span>
+                          </div>
+                          {result.repComparison.analysis && (
+                            <p className="rep-analysis">{result.repComparison.analysis}</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Speed Analysis */}
+                    {result.speedAnalysis && (
+                      <div className="result-section speed-analysis">
+                        <h5>🏃 Speed Analysis</h5>
+                        <p className="analysis-text">{result.speedAnalysis}</p>
+                      </div>
+                    )}
+
+                    {/* Form Issues */}
+                    {result.formIssues && result.formIssues.length > 0 && (
+                      <div className="result-section form-issues">
+                        <h5>⚠️ Form Issues</h5>
+                        <div className="issues-list">
+                          {result.formIssues.map((issue, i) => (
+                            <div key={i} className="issue-item">
+                              <span className="issue-timestamp">{issue.timestamp}</span>
+                              <span className="issue-text">{issue.issue}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Notable Timestamps */}
+                    {result.timestamps && result.timestamps.length > 0 && (
+                      <div className="result-section timestamps">
+                        <h5>📍 Key Moments</h5>
+                        <div className="timestamps-list">
+                          {result.timestamps.map((ts, i) => (
+                            <div key={i} className="timestamp-item">
+                              <span className="timestamp-time">{ts.time}</span>
+                              <span className="timestamp-observation">{ts.observation}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Detailed Analysis Paragraph */}
+                    {result.analysis && (
+                      <div className="result-section detailed-analysis">
+                        <h5>📝 Detailed Analysis</h5>
+                        <div className="analysis-box">
+                          <p>{result.analysis}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Click to expand hint */}
+                {!expandedSegments[idx] && (result.perMinuteAnalysis || result.formIssues || result.analysis) && (
+                  <div className="expand-hint" onClick={() => toggleSegmentExpansion(idx)}>
+                    Click to see detailed breakdown, form issues, and analysis
                   </div>
                 )}
               </div>
