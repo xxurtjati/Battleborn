@@ -2,7 +2,8 @@ import express from 'express';
 import {
   compareVideos,
   batchCompare,
-  getComparisonResult
+  getComparisonResult,
+  getComparisonProgress
 } from '../controllers/compareController.js';
 
 const router = express.Router();
@@ -10,5 +11,6 @@ const router = express.Router();
 router.post('/analyze', compareVideos);
 router.post('/batch', batchCompare);
 router.get('/results/:id', getComparisonResult);
+router.get('/progress/:jobId', getComparisonProgress);
 
 export default router;

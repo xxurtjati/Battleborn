@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import VideoPlayer from './VideoPlayer';
 import Timeline from './Timeline';
@@ -21,6 +21,9 @@ function VideoSplitter() {
   const [isTrimming, setIsTrimming] = useState(false);
   const [trimProgress, setTrimProgress] = useState(0);
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState(0);
+  const [trimJobId, setTrimJobId] = useState(null);
+  const [trimJobProgress, setTrimJobProgress] = useState(null);
+  const trimProgressPollRef = useRef(null);
   const videoRef = useRef(null);
 
   const handleFileSelect = async (e) => {
@@ -123,6 +126,72 @@ function VideoSplitter() {
     setTrimEnd(videoInfo?.duration || null);
   };
 
+  // Poll for trim job progress
+  useEffect(() => {
+    if (!trimJobId) return;
+
+    const pollTrimProgress = async () => {
+      try {
+        const response = await axios.get(`/api/video/progress/${trimJobId}`);
+        const job = response.data;
+
+        setTrimJobProgress(job);
+        setTrimProgress(job.progress || 0);
+
+        if (job.status === 'completed') {
+          clearInterval(trimProgressPollRef.current);
+          setTrimJobId(null);
+          setIsTrimming(false);
+          
+          // Update to use the new trimmed video
+          if (job.result) {
+            setVideoUrl(job.result.url);
+            setVideoFile(null); // Clear original file reference
+
+            // Get info for the new trimmed video
+            const infoResponse = await axios.get(
+              `/api/video/info/${job.result.filename}`
+            );
+            setVideoInfo(infoResponse.data);
+
+            // Reset trim boundaries to new video
+            setTrimStart(0);
+            setTrimEnd(infoResponse.data.duration);
+            setCutPoints([]);
+
+            alert('Video trimmed successfully!');
+          }
+        } else if (job.status === 'failed') {
+          clearInterval(trimProgressPollRef.current);
+          setTrimJobId(null);
+          setIsTrimming(false);
+          alert('Trim failed: ' + (job.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Progress poll error:', error);
+      }
+    };
+
+    // Poll immediately, then every second
+    pollTrimProgress();
+    trimProgressPollRef.current = setInterval(pollTrimProgress, 1000);
+
+    return () => {
+      if (trimProgressPollRef.current) {
+        clearInterval(trimProgressPollRef.current);
+      }
+    };
+  }, [trimJobId]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (trimProgressPollRef.current) {
+        clearInterval(trimProgressPollRef.current);
+      }
+    };
+  }, []);
+
   const handleTrimVideo = async () => {
     const effectiveTrimStart = trimStart || 0;
     const effectiveTrimEnd = trimEnd || videoInfo?.duration || 0;
@@ -142,45 +211,6 @@ function VideoSplitter() {
       setTrimProgress(0);
       const filename = videoUrl.split('/').pop();
 
-      // Calculate estimated processing time
-      const trimDuration = effectiveTrimEnd - effectiveTrimStart;
-      const originalDuration = videoInfo.duration;
-      const fileSizeMB = videoInfo.size / (1024 * 1024);
-
-      // Estimate output file size (proportional to trim duration)
-      const estimatedOutputSizeMB = fileSizeMB * (trimDuration / originalDuration);
-
-      // Processing speed: ~0.5-1.5 MB/s for transcoding (conservative estimate)
-      // Use slower speed for larger files
-      const processingSpeedMBps = fileSizeMB > 500 ? 0.5 : 1.0;
-      const estimatedDurationSeconds = estimatedOutputSizeMB / processingSpeedMBps;
-
-      // Add base overhead (2-5 seconds for setup/finalization)
-      const totalEstimatedSeconds = Math.max(estimatedDurationSeconds + 3, 5);
-
-      console.log(`Estimated trim time: ${totalEstimatedSeconds.toFixed(1)}s (${estimatedOutputSizeMB.toFixed(1)}MB @ ${processingSpeedMBps}MB/s)`);
-
-      const startTime = Date.now();
-
-      // Easing function - slows down as it approaches 95%
-      const easeOutQuad = (t) => t * (2 - t);
-
-      // Update progress based on estimated time
-      const progressInterval = setInterval(() => {
-        const elapsedSeconds = (Date.now() - startTime) / 1000;
-        const progressRatio = Math.min(elapsedSeconds / totalEstimatedSeconds, 1);
-
-        // Apply easing and cap at 95% until complete
-        const easedProgress = easeOutQuad(progressRatio);
-        const displayProgress = Math.min(easedProgress * 95, 95);
-
-        // Calculate time remaining
-        const remainingSeconds = Math.max(totalEstimatedSeconds - elapsedSeconds, 0);
-
-        setTrimProgress(Math.round(displayProgress));
-        setEstimatedTimeRemaining(Math.round(remainingSeconds));
-      }, 200); // Update every 200ms for smoother animation
-
       const response = await axios.post('/api/video/trim', {
         filename,
         trimStart: effectiveTrimStart,
@@ -188,43 +218,19 @@ function VideoSplitter() {
         outputFilename: `trimmed_${Date.now()}.mp4`,
       });
 
-      clearInterval(progressInterval);
-
-      // Animate from current progress to 100%
-      const finalProgress = trimProgress;
-      for (let p = finalProgress; p <= 100; p += 2) {
-        setTrimProgress(p);
-        await new Promise(resolve => setTimeout(resolve, 30));
-      }
-      setTrimProgress(100);
-
-      // Small delay to show 100%
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      alert('Video trimmed successfully!');
-
-      // Update to use the new trimmed video
-      setVideoUrl(response.data.url);
-      setVideoFile(null); // Clear original file reference
-
-      // Get info for the new trimmed video
-      const infoResponse = await axios.get(
-        `/api/video/info/${response.data.filename}`
-      );
-      setVideoInfo(infoResponse.data);
-
-      // Reset trim boundaries to new video
-      setTrimStart(0);
-      setTrimEnd(infoResponse.data.duration);
-      setCutPoints([]);
+      // Store job ID and start polling
+      setTrimJobId(response.data.jobId);
+      setTrimJobProgress({
+        status: 'processing',
+        progress: 0,
+        message: 'Starting trim...'
+      });
 
     } catch (error) {
-      console.error('Error trimming video:', error);
-      alert('Failed to trim video: ' + (error.response?.data?.error || error.message));
-    } finally {
+      console.error('Error starting trim:', error);
+      alert('Failed to start trim: ' + (error.response?.data?.error || error.message));
       setIsTrimming(false);
-      setTrimProgress(0);
-      setEstimatedTimeRemaining(0);
+      setTrimJobId(null);
     }
   };
 
@@ -239,8 +245,8 @@ function VideoSplitter() {
       alert('Interval must be greater than 0');
       return;
     }
-    if (totalInterval > 600) {
-      alert('Interval must be 10 minutes or less to respect segment limit');
+    if (totalInterval > 1200) {
+      alert('Interval must be 20 minutes or less to respect segment limit');
       return;
     }
     if (totalInterval >= trimRange) {
@@ -285,9 +291,9 @@ function VideoSplitter() {
 
     for (let i = 0; i < sortedCuts.length - 1; i++) {
       const duration = sortedCuts[i + 1] - sortedCuts[i];
-      if (duration > 600) {
+      if (duration > 1200) {
         errors.push(
-          `Segment ${i + 1}: ${(duration / 60).toFixed(2)} minutes (exceeds 10 min limit)`
+          `Segment ${i + 1}: ${(duration / 60).toFixed(2)} minutes (exceeds 20 min limit)`
         );
       }
     }
@@ -393,35 +399,46 @@ function VideoSplitter() {
           <div className="trim-controls">
             <h3>1. Trim Video (Optional)</h3>
             <div className="trim-buttons">
-              <button onClick={handleSetTrimStart} disabled={isProcessing || isTrimming}>
+              <button onClick={handleSetTrimStart} disabled={isProcessing}>
                 Set Trim Start
               </button>
-              <button onClick={handleSetTrimEnd} disabled={isProcessing || isTrimming}>
+              <button onClick={handleSetTrimEnd} disabled={isProcessing}>
                 Set Trim End
               </button>
-              <button onClick={handleResetTrim} disabled={isProcessing || isTrimming}>
+              <button onClick={handleResetTrim} disabled={isProcessing}>
                 Reset Trim
               </button>
             </div>
             {isTrimming && (
               <div className="trim-progress-container">
                 <div className="trim-progress-header">
-                  <span className="trim-progress-text">Trimming video...</span>
-                  <span className="trim-progress-percentage">{trimProgress}%</span>
+                  <span className="trim-progress-text">
+                    {trimJobProgress?.message || 'Trimming video...'}
+                  </span>
+                  <span className="trim-progress-percentage">
+                    {trimJobProgress?.progress || trimProgress}%
+                  </span>
                 </div>
                 <div className="trim-progress-bar">
                   <div
                     className="trim-progress-fill"
-                    style={{ width: `${trimProgress}%` }}
+                    style={{ width: `${trimJobProgress?.progress || trimProgress}%` }}
                   />
                 </div>
                 <p className="trim-progress-message">
-                  {estimatedTimeRemaining > 0 ? (
-                    <>Estimated time remaining: <strong>{estimatedTimeRemaining}s</strong></>
+                  {trimJobProgress?.estimatedTimeRemaining ? (
+                    <>Estimated time remaining: <strong>{Math.round(trimJobProgress.estimatedTimeRemaining / 1000)}s</strong></>
+                  ) : trimJobProgress?.progress === 100 ? (
+                    'Finalizing...'
                   ) : (
-                    'Almost done...'
+                    'Processing in background...'
                   )}
                 </p>
+                {trimJobProgress && (
+                  <p className="trim-progress-note" style={{ fontSize: '0.85rem', color: '#9ca3af', marginTop: '0.5rem' }}>
+                    💡 You can continue working while the video trims
+                  </p>
+                )}
               </div>
             )}
             {!isTrimming && (trimStart > 0 || (trimEnd && trimEnd < videoInfo.duration)) && (
@@ -433,7 +450,7 @@ function VideoSplitter() {
                   onClick={handleTrimVideo}
                   disabled={isProcessing || isTrimming}
                 >
-                  Apply Trim
+                  {isTrimming ? 'Trimming...' : 'Apply Trim'}
                 </button>
               </div>
             )}
@@ -513,7 +530,7 @@ function VideoSplitter() {
                 {[trimStart || 0, ...cutPoints, trimEnd || videoInfo.duration].map((time, i, arr) => {
                   if (i === arr.length - 1) return null;
                   const duration = arr[i + 1] - time;
-                  const isValid = duration <= 600;
+                  const isValid = duration <= 1200;
                   return (
                     <div key={i} className={`segment-item ${!isValid ? 'invalid' : ''}`}>
                       <span className="segment-number">Segment {i + 1}</span>

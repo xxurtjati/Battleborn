@@ -9,6 +9,7 @@ function VideoComparison() {
   const [userSegments, setUserSegments] = useState([]);
   const [comparisons, setComparisons] = useState([]);
   const [isComparing, setIsComparing] = useState(false);
+  const [overallMatch, setOverallMatch] = useState(null);
 
   // Segment picker modal state
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -234,12 +235,19 @@ function VideoComparison() {
 
   const handleCompare = async () => {
     if (instructorSegments.length === 0 || userSegments.length === 0) {
-      alert('Please select both instructor and user segments');
+      alert('Please complete Step 1 and Step 2: Add both instructor and user segments');
       return;
     }
 
     if (instructorSegments.length !== userSegments.length) {
-      alert('Instructor and user must have the same number of segments');
+      alert(`Segment count mismatch: Instructor has ${instructorSegments.length} segments, User has ${userSegments.length} segments.\n\nPlease ensure both have the same number of segments.`);
+      return;
+    }
+
+    // Validate 20-minute limit
+    const validation = validateSegmentsForComparison();
+    if (validation.errors.length > 0) {
+      alert('Cannot start comparison. Please fix these errors:\n\n' + validation.errors.join('\n') + '\n\nEach segment must be under 20 minutes.');
       return;
     }
 
@@ -304,6 +312,64 @@ function VideoComparison() {
     return timeStr || 'N/A';
   };
 
+  // Validate segments for 20-minute maximum limit
+  const validateSegmentsForComparison = () => {
+    const errors = [];
+    const guidance = [];
+    const totalSegments = Math.max(instructorSegments.length, userSegments.length);
+    
+    // Check instructor segments for 20-minute limit
+    instructorSegments.forEach((seg, idx) => {
+      if (seg.duration && seg.duration > 1200) { // 20 minutes = 1200 seconds
+        errors.push(`Instructor Segment ${idx + 1}: ${(seg.duration / 60).toFixed(1)} minutes (exceeds 20 min maximum limit)`);
+      }
+    });
+
+    // Check user segments for 20-minute limit
+    userSegments.forEach((seg, idx) => {
+      if (seg.duration && seg.duration > 1200) { // 20 minutes = 1200 seconds
+        errors.push(`User Segment ${idx + 1}: ${(seg.duration / 60).toFixed(1)} minutes (exceeds 20 min maximum limit)`);
+      }
+    });
+
+    // Guidance about segment count (only if no errors)
+    if (totalSegments === 0) {
+      return { errors, guidance: [], totalSegments: 0 };
+    }
+    
+    if (errors.length === 0) {
+      if (totalSegments === 1) {
+        guidance.push({
+          type: 'info',
+          message: '💡 Tip: Breaking your video into multiple shorter segments (2-5 minutes each) will give the AI more detailed and accurate feedback.'
+        });
+      } else if (totalSegments < 3) {
+        guidance.push({
+          type: 'info',
+          message: '💡 Good! More segments = better AI analysis. Consider splitting into even shorter segments (2-3 minutes) for optimal results.'
+        });
+      } else {
+        guidance.push({
+          type: 'success',
+          message: `✅ Excellent! ${totalSegments} segments will provide detailed, accurate AI feedback.`
+        });
+      }
+    }
+
+    return { errors, guidance, totalSegments };
+  };
+
+  // Check if steps are completed
+  const getStepStatus = () => {
+    return {
+      step1: userSegments.length > 0, // User content added
+      step2: instructorSegments.length > 0, // Instructor content added
+      step3: instructorSegments.length > 0 && 
+             userSegments.length > 0 && 
+             instructorSegments.length === userSegments.length // Segments matched
+    };
+  };
+
   const toggleExpandedResult = (index) => {
     setExpandedResults(prev => {
       const newSet = new Set(prev);
@@ -316,11 +382,137 @@ function VideoComparison() {
     });
   };
 
+  const stepStatus = getStepStatus();
+  const segmentValidation = validateSegmentsForComparison();
+
   return (
     <div className="video-comparison">
       <div className="comparison-header">
         <h2>Video Comparison</h2>
         <p>Compare user workout submissions against instructor videos using AI analysis</p>
+      </div>
+
+      {/* Step-by-Step Guide */}
+      <div className="workflow-guide">
+        <h3>📋 Workflow Guide</h3>
+        <p className="workflow-intro">
+          Complete these steps in any order. Videos must be manually synced so the AI can properly compare them.
+        </p>
+        
+        <div className="steps-container">
+          <div className={`workflow-step ${stepStatus.step1 ? 'completed' : ''}`}>
+            <div className="step-header">
+              <div className="step-number">
+                {stepStatus.step1 ? '✓' : '1'}
+              </div>
+              <h4>Step 1: Add & Trim User Content</h4>
+            </div>
+            <div className="step-content">
+              <p>Go to the <strong>Video Splitter</strong> tab to:</p>
+              <ul>
+                <li>Upload your workout video</li>
+                <li>Trim it to match the instructor video timing</li>
+                <li>Split into segments (max 20 minutes each)</li>
+                <li>Upload the segments here or browse saved segments</li>
+              </ul>
+              <p className="step-note">
+                ⚠️ <strong>Important:</strong> Manually sync your video with the instructor video. 
+                The AI comparison quality depends on proper alignment.
+              </p>
+              {stepStatus.step1 && (
+                <div className="step-status-badge">
+                  ✓ {userSegments.length} user segment{userSegments.length !== 1 ? 's' : ''} loaded
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className={`workflow-step ${stepStatus.step2 ? 'completed' : ''}`}>
+            <div className="step-header">
+              <div className="step-number">
+                {stepStatus.step2 ? '✓' : '2'}
+              </div>
+              <h4>Step 2: Add & Trim Instructor Content</h4>
+            </div>
+            <div className="step-content">
+              <p>Add the instructor/reference video:</p>
+              <ul>
+                <li>Download from YouTube (with auto-segmentation)</li>
+                <li>Or upload pre-split instructor segments</li>
+                <li>Ensure segments match user segments in timing</li>
+                <li>Each segment must be under 20 minutes</li>
+              </ul>
+              {stepStatus.step2 && (
+                <div className="step-status-badge">
+                  ✓ {instructorSegments.length} instructor segment{instructorSegments.length !== 1 ? 's' : ''} loaded
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className={`workflow-step ${stepStatus.step3 ? 'completed' : 'pending'}`}>
+            <div className="step-header">
+              <div className="step-number">
+                {stepStatus.step3 ? '✓' : '3'}
+              </div>
+              <h4>Step 3: Match Segments & Review</h4>
+            </div>
+            <div className="step-content">
+              <p>Before AI review, ensure:</p>
+              <ul>
+                <li>Same number of user and instructor segments</li>
+                <li>Segments are properly aligned/synced</li>
+              </ul>
+              
+              <div className="ai-accuracy-tip">
+                <strong>🎯 AI Accuracy Tip:</strong>
+                <p>
+                  The more you break up your videos into shorter segments, the more accurate and detailed 
+                  the AI feedback will be. Instead of one long segment, consider splitting into multiple 
+                  2-5 minute segments for better analysis of form, timing, and technique.
+                </p>
+                <p className="tip-example">
+                  <strong>Example:</strong> A 10-minute workout split into 5 segments of 2 minutes each 
+                  will provide much more detailed feedback than a single 10-minute segment.
+                </p>
+                <p className="tip-limit" style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#1a1a1a', borderRadius: '6px', borderLeft: '3px solid #f59e0b' }}>
+                  <strong>⚠️ Maximum Limit:</strong> Each segment must be under <strong>20 minutes</strong>. 
+                  Segments longer than 20 minutes cannot be compared by the AI.
+                </p>
+              </div>
+
+              {segmentValidation.errors.length > 0 && (
+                <div className="validation-errors">
+                  <strong>❌ Cannot compare - segments exceed 20 minute limit:</strong>
+                  <ul>
+                    {segmentValidation.errors.map((error, i) => (
+                      <li key={i}>{error}</li>
+                    ))}
+                  </ul>
+                  <p style={{ marginTop: '0.75rem', fontSize: '0.9rem' }}>
+                    Please split these segments into smaller parts (under 20 minutes each) before comparing.
+                  </p>
+                </div>
+              )}
+
+              {segmentValidation.guidance.length > 0 && segmentValidation.errors.length === 0 && (
+                <div className="segment-guidance">
+                  {segmentValidation.guidance.map((item, i) => (
+                    <div key={i} className={`guidance-item guidance-${item.type}`}>
+                      {item.message}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {stepStatus.step3 && (
+                <div className="step-status-badge success">
+                  ✓ Ready for AI comparison! {instructorSegments.length} segment pair{instructorSegments.length !== 1 ? 's' : ''} matched
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="youtube-section">
@@ -631,12 +823,36 @@ function VideoComparison() {
           </div>
 
           <div className="compare-actions">
+            {segmentValidation.errors.length > 0 && (
+              <div className="validation-blocker">
+                <strong>❌ Cannot start comparison:</strong>
+                <ul>
+                  {segmentValidation.errors.map((error, i) => (
+                    <li key={i}>{error}</li>
+                  ))}
+                </ul>
+                <p style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
+                  Please split segments longer than 20 minutes before comparing.
+                </p>
+              </div>
+            )}
+            {segmentValidation.guidance.length > 0 && stepStatus.step3 && segmentValidation.errors.length === 0 && (
+              <div className="comparison-guidance-note">
+                {segmentValidation.guidance.map((item, i) => (
+                  <p key={i}>{item.message}</p>
+                ))}
+              </div>
+            )}
             <button
               className="compare-all-button"
               onClick={handleCompare}
-              disabled={isComparing}
+              disabled={isComparing || !stepStatus.step3 || segmentValidation.errors.length > 0}
+              title={!stepStatus.step3 ? 'Complete all steps before comparing' : segmentValidation.errors.length > 0 ? 'Fix segment duration errors first' : ''}
             >
-              {isComparing ? 'Comparing...' : 'Compare All Segments'}
+              {isComparing ? 'Comparing...' : 
+               segmentValidation.errors.length > 0 ? 'Fix Errors to Compare' :
+               !stepStatus.step3 ? 'Complete Steps 1-3 First' :
+               'Compare All Segments'}
             </button>
           </div>
         </>

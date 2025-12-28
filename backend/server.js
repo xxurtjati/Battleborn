@@ -8,7 +8,26 @@ import dotenv from 'dotenv';
 import videoRoutes from './routes/video.js';
 import compareRoutes from './routes/compare.js';
 
-dotenv.config();
+// Load .env from the backend directory
+// Try multiple possible locations for the .env file
+const possibleEnvPaths = [
+  new URL('.env', import.meta.url).pathname,
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '.env'),
+  path.resolve('.env'),
+  path.resolve('backend/.env')
+];
+
+let envLoaded = false;
+for (const envPath of possibleEnvPaths) {
+  const result = dotenv.config({ path: envPath });
+  if (!result.error && process.env.GEMINI_API_KEY) {
+    console.log('Loaded .env from:', envPath);
+    envLoaded = true;
+    break;
+  }
+}
+
+console.log('Gemini API Key loaded:', process.env.GEMINI_API_KEY ? 'YES' : 'NO');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,11 +66,12 @@ const segmentStorage = multer.diskStorage({
     cb(null, outputsDir);
   },
   filename: (req, file, cb) => {
-    // Use original filename with a timestamp prefix to avoid conflicts
+    // Preserve original filename - just add timestamp suffix if file already exists
+    const ext = path.extname(file.originalname);
+    const baseName = path.basename(file.originalname, ext);
     const timestamp = Date.now();
-    const prefix = req.body.prefix || 'uploaded_seg';
-    const index = file.originalname.match(/(\d+)/)?.[1] || '01';
-    cb(null, `${prefix}_${String(index).padStart(2, '0')}_${timestamp}.mp4`);
+    // Add a short timestamp to ensure uniqueness while keeping original name recognizable
+    cb(null, `${baseName}_${timestamp}${ext}`);
   }
 });
 

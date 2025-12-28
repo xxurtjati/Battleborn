@@ -133,7 +133,7 @@ export const getVideoInfo = (req, res) => {
   });
 };
 
-// Split video into segments
+// Split video into segments (ASYNC VERSION)
 export const splitVideo = async (req, res) => {
   try {
     const { filename, cutPoints, trimStart, trimEnd, outputPrefix } = req.body;
@@ -163,16 +163,16 @@ export const splitVideo = async (req, res) => {
     const sortedCuts = [effectiveTrimStart, ...cutPoints.sort((a, b) => a - b)];
     sortedCuts.push(effectiveTrimEnd);
 
-    // Create segments
+    // Create segments metadata
     for (let i = 0; i < sortedCuts.length - 1; i++) {
       const start = sortedCuts[i];
       const end = sortedCuts[i + 1];
       const duration = end - start;
 
-      // Validate segment is not longer than 10 minutes (600 seconds)
-      if (duration > 600) {
+      // Validate segment is not longer than 20 minutes (1200 seconds)
+      if (duration > 1200) {
         return res.status(400).json({
-          error: `Segment ${i + 1} is ${(duration / 60).toFixed(2)} minutes long, exceeds 10 minute limit`
+          error: `Segment ${i + 1} is ${(duration / 60).toFixed(2)} minutes long, exceeds 20 minute limit`
         });
       }
 
@@ -189,17 +189,99 @@ export const splitVideo = async (req, res) => {
       });
     }
 
-    // Process all segments
+    // Create job ID and return immediately
+    const jobId = `split_${Date.now()}`;
+    progressTracker.createJob(jobId, 100);
+
+    // Return job ID immediately so client can poll for progress
+    res.json({
+      jobId,
+      message: 'Split started',
+      segmentCount: segments.length
+    });
+
+    // Process asynchronously
+    processSplitAsync(jobId, videoPath, segments);
+
+  } catch (error) {
+    console.error('Split error:', error);
+    res.status(500).json({ error: 'Failed to start split', details: error.message });
+  }
+};
+
+// Process split asynchronously with progress tracking
+async function processSplitAsync(jobId, videoPath, segments) {
+  try {
+    const totalSegments = segments.length;
     const results = [];
 
-    for (const segment of segments) {
+    progressTracker.updateProgress(jobId, {
+      status: 'processing',
+      progress: 0,
+      phase: 'split',
+      message: `Starting to create ${totalSegments} segment${totalSegments !== 1 ? 's' : ''}`,
+      currentSegment: 0,
+      totalSegments
+    });
+
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      
+      // Calculate the progress range for this segment
+      // Each segment gets an equal portion of 0-100%
+      const segmentStartProgress = (i / totalSegments) * 100;
+      const segmentEndProgress = ((i + 1) / totalSegments) * 100;
+      const segmentRange = segmentEndProgress - segmentStartProgress;
+
+      progressTracker.updateProgress(jobId, {
+        progress: Math.round(segmentStartProgress),
+        message: `Processing segment ${segment.index} of ${totalSegments} (0%)`,
+        currentSegment: segment.index,
+        totalSegments
+      });
+
       await new Promise((resolve, reject) => {
+        let lastReportedPercent = 0;
+        
         ffmpeg(videoPath)
           .setStartTime(segment.start)
           .setDuration(segment.duration)
           .output(segment.path)
           .videoCodec('libx264')
           .audioCodec('aac')
+          .on('progress', (progress) => {
+            // FFmpeg provides percent or we calculate from time
+            let intraSegmentPercent = 0;
+            
+            if (progress.percent) {
+              intraSegmentPercent = progress.percent;
+            } else if (progress.timemark && segment.duration > 0) {
+              // Parse timemark (format: "00:01:30.00")
+              const timeMatch = progress.timemark.match(/(\d+):(\d+):(\d+)/);
+              if (timeMatch) {
+                const processedSeconds = parseInt(timeMatch[1]) * 3600 + 
+                                         parseInt(timeMatch[2]) * 60 + 
+                                         parseInt(timeMatch[3]);
+                intraSegmentPercent = (processedSeconds / segment.duration) * 100;
+              }
+            }
+            
+            // Only update if we've made meaningful progress (avoid spam)
+            if (intraSegmentPercent > lastReportedPercent + 2) {
+              lastReportedPercent = intraSegmentPercent;
+              
+              // Calculate overall progress: segment base + portion within segment
+              const overallProgress = segmentStartProgress + (intraSegmentPercent / 100) * segmentRange;
+              
+              progressTracker.updateProgress(jobId, {
+                progress: Math.round(Math.min(overallProgress, segmentEndProgress - 1)),
+                message: `Processing segment ${segment.index} of ${totalSegments} (${Math.round(intraSegmentPercent)}%)`,
+                currentSegment: segment.index,
+                totalSegments,
+                segmentProgress: Math.round(intraSegmentPercent)
+              });
+            }
+          })
           .on('end', () => {
             console.log(`Segment ${segment.index} created successfully`);
             resolve();
@@ -221,16 +303,17 @@ export const splitVideo = async (req, res) => {
       });
     }
 
-    res.json({
+    // Complete the job with results
+    progressTracker.completeJob(jobId, {
       message: 'Video split successfully',
       segments: results
     });
 
   } catch (error) {
-    console.error('Split error:', error);
-    res.status(500).json({ error: 'Failed to split video', details: error.message });
+    console.error('Split processing error:', error);
+    progressTracker.failJob(jobId, error.message);
   }
-};
+}
 
 // List all output segments with metadata and grouping
 export const listOutputs = async (req, res) => {
@@ -339,7 +422,7 @@ export const deleteOutputs = async (req, res) => {
   }
 };
 
-// Trim video to create a new trimmed file
+// Trim video to create a new trimmed file (ASYNC VERSION)
 export const trimVideo = async (req, res) => {
   try {
     const { filename, trimStart, trimEnd, outputFilename } = req.body;
@@ -349,48 +432,156 @@ export const trimVideo = async (req, res) => {
     }
 
     const videoPath = path.join(uploadsDir, filename);
-    const outputName = outputFilename || `trimmed_${Date.now()}.mp4`;
-    const outputPath = path.join(uploadsDir, outputName);
-
     const duration = trimEnd - trimStart;
 
     if (duration <= 0) {
       return res.status(400).json({ error: 'Invalid trim range' });
     }
 
-    // Create trimmed video
+    // Create job ID and return immediately
+    const jobId = `trim_${Date.now()}`;
+    progressTracker.createJob(jobId, 100);
+
+    // Return job ID immediately so client can poll for progress
+    res.json({
+      jobId,
+      message: 'Trim started',
+      filename,
+      trimStart,
+      trimEnd
+    });
+
+    // Process asynchronously
+    processTrimAsync(jobId, videoPath, trimStart, trimEnd, outputFilename);
+
+  } catch (error) {
+    console.error('Trim error:', error);
+    res.status(500).json({ error: 'Failed to start trim', details: error.message });
+  }
+};
+
+// Process trim asynchronously with progress tracking
+async function processTrimAsync(jobId, videoPath, trimStart, trimEnd, outputFilename) {
+  try {
+    progressTracker.updateProgress(jobId, {
+      status: 'processing',
+      progress: 5,
+      phase: 'trim',
+      message: 'Initializing trim operation'
+    });
+
+    const outputName = outputFilename || `trimmed_${Date.now()}.mp4`;
+    const outputPath = path.join(uploadsDir, outputName);
+    const duration = trimEnd - trimStart;
+
+    // Get video metadata to calculate total frames/duration for progress
+    const metadata = await new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(videoPath, (err, data) => {
+        if (err) reject(err);
+        else resolve(data);
+      });
+    });
+
+    const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+    const fps = eval(videoStream?.r_frame_rate) || 30;
+    const totalFrames = Math.floor(duration * fps);
+
+    progressTracker.updateProgress(jobId, {
+      progress: 10,
+      phase: 'trim',
+      message: 'Starting video trim'
+    });
+
+    // Create trimmed video with progress tracking
     await new Promise((resolve, reject) => {
-      ffmpeg(videoPath)
+      let lastProgress = 10;
+      let processedFrames = 0;
+      let processedTime = 0;
+
+      const ffmpegProcess = ffmpeg(videoPath)
         .setStartTime(trimStart)
         .setDuration(duration)
         .output(outputPath)
         .videoCodec('libx264')
         .audioCodec('aac')
+        .on('start', (commandLine) => {
+          console.log('FFmpeg command:', commandLine);
+        })
+        .on('progress', (progress) => {
+          // FFmpeg progress event provides frames and time
+          if (progress.frames) {
+            processedFrames = progress.frames;
+            const progressPercent = Math.min(95, 10 + (processedFrames / totalFrames) * 85);
+            
+            if (progressPercent > lastProgress) {
+              lastProgress = progressPercent;
+              progressTracker.updateProgress(jobId, {
+                progress: Math.round(progressPercent),
+                phase: 'trim',
+                message: `Trimming video (${Math.round(progressPercent)}%)`
+              });
+            }
+          }
+          
+          // Also use time-based progress if available
+          if (progress.timemark && duration > 0) {
+            const timeMatch = progress.timemark.match(/(\d+):(\d+):(\d+\.\d+)/);
+            if (timeMatch) {
+              const hours = parseInt(timeMatch[1]);
+              const minutes = parseInt(timeMatch[2]);
+              const seconds = parseFloat(timeMatch[3]);
+              const currentTime = hours * 3600 + minutes * 60 + seconds;
+              
+              if (currentTime > processedTime) {
+                processedTime = currentTime;
+                const timePercent = Math.min(95, 10 + (currentTime / duration) * 85);
+                
+                if (timePercent > lastProgress) {
+                  lastProgress = timePercent;
+                  progressTracker.updateProgress(jobId, {
+                    progress: Math.round(timePercent),
+                    phase: 'trim',
+                    message: `Trimming video (${Math.round(timePercent)}%)`
+                  });
+                }
+              }
+            }
+          }
+        })
         .on('end', () => {
           console.log('Video trimmed successfully');
           resolve();
         })
         .on('error', (err) => {
           console.error('Error trimming video:', err);
+          progressTracker.failJob(jobId, err.message);
           reject(err);
-        })
-        .run();
+        });
+
+      ffmpegProcess.run();
     });
 
-    res.json({
+    // Get file stats for result
+    const stats = await fs.stat(outputPath);
+
+    // Complete the job
+    const result = {
       message: 'Video trimmed successfully',
       filename: outputName,
       url: `/uploads/${outputName}`,
       trimStart,
       trimEnd,
-      duration
-    });
+      duration,
+      size: stats.size
+    };
+
+    progressTracker.completeJob(jobId, result);
 
   } catch (error) {
-    console.error('Trim error:', error);
-    res.status(500).json({ error: 'Failed to trim video', details: error.message });
+    console.error('Trim processing error:', error);
+    progressTracker.failJob(jobId, error.message);
   }
-};
+}
 
 // Get progress for a job
 export const getProgress = async (req, res) => {
@@ -536,16 +727,47 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
       const targetDuration = (endTime || 0) - (startTime || 0); // Total seconds to download
 
       const parseAndUpdateProgress = (output) => {
-        // Parse standard yt-dlp download progress (format: "[download]  XX.X% of ...")
-        const downloadMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+        // Parse standard yt-dlp download progress (format: "[download]  XX.X% of YY.YMiB at ZZ.ZZMiB/s ETA MM:SS")
+        const downloadMatch = output.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+([\d.]+)(\w+)\s+at\s+([\d.]+)(\w+\/s)/);
         if (downloadMatch) {
           const downloadPercent = parseFloat(downloadMatch[1]);
-          const scaledProgress = 10 + (downloadPercent * 0.25);
-          if (scaledProgress > lastProgress) {
-            lastProgress = scaledProgress;
+          const fileSize = parseFloat(downloadMatch[2]);
+          const fileSizeUnit = downloadMatch[3];
+          const speed = parseFloat(downloadMatch[4]);
+          const speedUnit = downloadMatch[5];
+          
+          // Parse ETA if present
+          const etaMatch = output.match(/ETA\s+(\d+):(\d+)/);
+          let etaSeconds = null;
+          if (etaMatch) {
+            etaSeconds = parseInt(etaMatch[1]) * 60 + parseInt(etaMatch[2]);
+          }
+          
+          // Use the REAL download percentage - no confusing scaling!
+          if (downloadPercent > lastProgress) {
+            lastProgress = downloadPercent;
             progressTracker.updateProgress(jobId, {
-              progress: Math.round(scaledProgress),
-              message: `Downloading video (${Math.round(downloadPercent)}%)`
+              progress: Math.round(downloadPercent),
+              phase: 'download',
+              message: 'Downloading video',
+              downloadSpeed: `${speed.toFixed(1)} ${speedUnit}`,
+              downloadedSize: `${fileSize.toFixed(1)} ${fileSizeUnit}`,
+              etaSeconds
+            });
+          }
+          return;
+        }
+        
+        // Fallback: simpler percentage-only match
+        const simpleMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+        if (simpleMatch) {
+          const downloadPercent = parseFloat(simpleMatch[1]);
+          if (downloadPercent > lastProgress) {
+            lastProgress = downloadPercent;
+            progressTracker.updateProgress(jobId, {
+              progress: Math.round(downloadPercent),
+              phase: 'download',
+              message: 'Downloading video'
             });
           }
           return;
@@ -559,12 +781,14 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
           const seconds = parseInt(timeMatch[3]);
           const processedSeconds = hours * 3600 + minutes * 60 + seconds;
           const ffmpegPercent = Math.min(100, (processedSeconds / targetDuration) * 100);
-          const scaledProgress = 10 + (ffmpegPercent * 0.25);
-          if (scaledProgress > lastProgress) {
-            lastProgress = scaledProgress;
+          
+          // Use the REAL FFmpeg percentage - no confusing scaling!
+          if (ffmpegPercent > lastProgress) {
+            lastProgress = ffmpegPercent;
             progressTracker.updateProgress(jobId, {
-              progress: Math.round(scaledProgress),
-              message: `Processing video (${Math.round(ffmpegPercent)}%)`
+              progress: Math.round(ffmpegPercent),
+              phase: 'processing',
+              message: 'Processing video'
             });
           }
           return;
@@ -572,11 +796,11 @@ async function processYouTubeDownload(jobId, url, startTime, endTime, quality, i
 
         // Parse frame-based progress (format: "frame= 1234")
         const frameMatch = output.match(/frame=\s*(\d+)/);
-        if (frameMatch && lastProgress < 35) {
-          // Just show activity - we don't know total frames
+        if (frameMatch) {
           const frames = parseInt(frameMatch[1]);
           if (frames % 500 === 0) { // Update every 500 frames
             progressTracker.updateProgress(jobId, {
+              phase: 'processing',
               message: `Processing video (${frames} frames)`
             });
           }
