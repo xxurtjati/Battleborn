@@ -41,9 +41,26 @@ const outputsDir = path.join(__dirname, '..', '..', 'outputs');
 // Upload video handler
 export const uploadVideo = async (req, res) => {
   try {
+    // Check for multer errors
+    if (req.fileValidationError) {
+      return res.status(400).json({ 
+        error: 'File validation failed', 
+        details: req.fileValidationError 
+      });
+    }
+
     if (!req.file) {
+      // Check if it's a multer error
+      if (req.error) {
+        return res.status(400).json({ 
+          error: 'Upload error', 
+          details: req.error.message || 'Unknown upload error' 
+        });
+      }
       return res.status(400).json({ error: 'No video file uploaded' });
     }
+
+    console.log(`✅ Video uploaded: ${req.file.filename} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
 
     res.json({
       message: 'Video uploaded successfully',
@@ -53,7 +70,10 @@ export const uploadVideo = async (req, res) => {
     });
   } catch (error) {
     console.error('Upload error:', error);
-    res.status(500).json({ error: 'Failed to upload video' });
+    res.status(500).json({ 
+      error: 'Failed to upload video',
+      details: error.message 
+    });
   }
 };
 

@@ -137,11 +137,14 @@ function VideoPreparationPanel({
       setProcessingStartTime(Date.now());
       const response = await axios.post('/api/video/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 900000, // 15 minute timeout for large files (up to 5GB)
         onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total
-          );
-          setUploadProgress(percentCompleted);
+          if (progressEvent.total) {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            setUploadProgress(percentCompleted);
+          }
         },
       });
 
@@ -154,7 +157,14 @@ function VideoPreparationPanel({
       setTrimEnd(infoResponse.data.duration);
     } catch (error) {
       console.error('Error uploading video:', error);
-      alert('Failed to upload video. Please try again.');
+      const errorMessage = error.response?.data?.error || 
+                          error.response?.data?.details ||
+                          error.message ||
+                          'Failed to upload video';
+      const errorDetails = error.response?.data?.details 
+        ? `\n\nDetails: ${error.response.data.details}`
+        : '';
+      alert(`Failed to upload video: ${errorMessage}${errorDetails}\n\nPlease check:\n- File size is under 5GB\n- File is a valid video format\n- Your internet connection is stable`);
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -264,17 +274,35 @@ function VideoPreparationPanel({
     
     if (duration <= 0) return [];
     
+    // Calculate estimated bitrate from original video
+    let estimatedBitrate = null;
+    if (videoInfo?.size && videoInfo?.duration) {
+      // Original video bitrate in bits per second
+      estimatedBitrate = (videoInfo.size * 8) / videoInfo.duration;
+    }
+    
     const numSegments = Math.ceil(duration / interval);
     const preview = [];
     
     for (let i = 0; i < numSegments; i++) {
       const start = effectiveTrimStart + (i * interval);
       const end = Math.min(start + interval, effectiveTrimEnd);
+      const segmentDuration = end - start;
+      
+      // Estimate file size for this segment
+      let estimatedSizeMB = null;
+      if (estimatedBitrate && segmentDuration > 0) {
+        // Estimate: (bitrate * duration) / 8 to get bytes, then / 1024 / 1024 for MB
+        estimatedSizeMB = (estimatedBitrate * segmentDuration) / 8 / 1024 / 1024;
+      }
+      
       preview.push({
         index: i + 1,
         start,
         end,
-        duration: end - start
+        duration: segmentDuration,
+        estimatedSizeMB: estimatedSizeMB ? estimatedSizeMB.toFixed(1) : null,
+        isTooLarge: estimatedSizeMB ? estimatedSizeMB > 350 : false
       });
     }
     
@@ -984,18 +1012,71 @@ function VideoPreparationPanel({
                 {segmentsPreview.length > 0 && (
                   <div className="segments-preview">
                     <p>Will create <strong>{segmentsPreview.length} segment{segmentsPreview.length !== 1 ? 's' : ''}</strong></p>
+                    
+                    {/* Show warning if any segment is too large */}
+                    {segmentsPreview.some(seg => seg.isTooLarge) && (
+                      <div className="segment-size-warning" style={{
+                        background: 'rgba(244, 67, 54, 0.1)',
+                        border: '1px solid rgba(244, 67, 54, 0.3)',
+                        borderRadius: '8px',
+                        padding: '12px',
+                        marginTop: '12px',
+                        marginBottom: '12px'
+                      }}>
+                        <strong style={{color: '#ef5350'}}>⚠️ Warning: Some segments are too large!</strong>
+                        <p style={{margin: '8px 0 0 0', fontSize: '0.9rem', color: 'rgba(255, 255, 255, 0.8)'}}>
+                          Segments must be under 350MB for processing. Please use shorter segment durations (2-3 minutes recommended).
+                        </p>
+                      </div>
+                    )}
+                    
                     <div className="preview-list">
                       {segmentsPreview.slice(0, 5).map((seg, idx) => (
-                        <div key={idx} className="preview-item">
+                        <div key={idx} className="preview-item" style={{
+                          color: seg.isTooLarge ? '#ef5350' : 'inherit',
+                          fontWeight: seg.isTooLarge ? '600' : 'normal'
+                        }}>
                           Segment {seg.index}: {formatTime(seg.start)} → {formatTime(seg.end)}
+                          {seg.estimatedSizeMB && (
+                            <span style={{marginLeft: '8px', fontSize: '0.85rem', opacity: 0.7}}>
+                              (~{seg.estimatedSizeMB} MB{seg.isTooLarge ? ' ⚠️ TOO LARGE' : ''})
+                            </span>
+                          )}
                         </div>
                       ))}
                       {segmentsPreview.length > 5 && (
                         <div className="preview-item more">
                           +{segmentsPreview.length - 5} more...
+                          {segmentsPreview.slice(5).some(seg => seg.isTooLarge) && (
+                            <span style={{color: '#ef5350', marginLeft: '8px'}}>
+                              (some may be too large)
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
+                    
+                    {/* Show summary of sizes */}
+                    {segmentsPreview[0]?.estimatedSizeMB && (
+                      <div style={{
+                        marginTop: '12px',
+                        padding: '8px',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        borderRadius: '6px',
+                        fontSize: '0.85rem'
+                      }}>
+                        <strong>Estimated sizes:</strong> {
+                          segmentsPreview.filter(seg => seg.estimatedSizeMB).length
+                        } segment{segmentsPreview.length !== 1 ? 's' : ''} estimated, 
+                        {segmentsPreview.filter(seg => seg.isTooLarge).length > 0 ? (
+                          <span style={{color: '#ef5350'}}>
+                            {' '}{segmentsPreview.filter(seg => seg.isTooLarge).length} too large
+                          </span>
+                        ) : (
+                          <span style={{color: '#4caf50'}}> all within limits</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1025,13 +1106,29 @@ function VideoPreparationPanel({
                     </button>
                   </div>
                 ) : (
-                  <button 
-                    className="process-btn"
-                    onClick={handleProcessVideo}
-                    disabled={!videoInfo || segmentsPreview.length === 0}
-                  >
-                    ▶️ Process Video
-                  </button>
+                  <>
+                    <button 
+                      className="process-btn"
+                      onClick={handleProcessVideo}
+                      disabled={
+                        !videoInfo || 
+                        segmentsPreview.length === 0 ||
+                        segmentsPreview.some(seg => seg.isTooLarge)
+                      }
+                    >
+                      ▶️ Process Video
+                    </button>
+                    {segmentsPreview.some(seg => seg.isTooLarge) && (
+                      <p style={{
+                        marginTop: '12px',
+                        color: '#ef5350',
+                        fontSize: '0.9rem',
+                        textAlign: 'center'
+                      }}>
+                        ⚠️ Cannot process: Some segments exceed 350MB limit. Please use shorter segment durations.
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
 
